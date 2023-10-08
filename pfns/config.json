@@ -1,0 +1,56 @@
+{
+    "PFN-lbfgs-minimizer-sampleonlyvalid-fast-sobol-gpu": [
+        "pfn_bo_bayesmark.py",
+        {
+            "pfn_file" : "final_models/model_hebo_morebudget_9_unused_features_3.pt",
+            "minimize": 1,
+            "device": "cuda:0",
+            "fit_encoder_from_step": null,
+            "sample_only_valid": 1,
+            "pre_sample_size": 1000,
+            "num_candidates": 10,
+            "sobol_sampler": 1
+        }
+    ],
+    "PFN-lbfgs-minimizer-sampleonlyvalid-fast-max1id0-gpu": [
+        "pfn_bo_bayesmark.py",
+        {
+            "pfn_file" : "final_models/model_hebo_morebudget_9_unused_features_3.pt",
+            "minimize": 1,
+            "device": "cuda:0",
+            "fit_encoder_from_step": null,
+            "sample_only_valid": 1,
+            "pre_sample_size": 1000,
+            "num_candidates": 10,
+            "max_initial_design": 1,
+            "fixed_initial_guess": 0.0
+        }
+    ],
+    "PFN-lbfgs-minimizer-sampleonlyvalid-fast-max1id0.5-gpu": [
+        "pfn_bo_bayesmark.py",
+        {
+            "pfn_file" : "final_models/model_hebo_morebudget_9_unused_features_3.pt",
+            "minimize": 1,
+            "device": "cuda:0",
+            "fit_encoder_from_step": null,
+            "sample_only_valid": 1,
+            "pre_sample_size": 1000,
+            "num_candidates": 10,
+            "max_initial_design": 1,
+            "fixed_initial_guess": 0.0
+        }
+    ],
+    "PFN-lbfgs-minimizer-sampleonlyvalid-fast-bnn-sobol-gpu": [
+        "pfn_bo_bayesmark.py",
+        {
+            "pfn_file" : "final_models/model_sampled_warp_simple_mlp_for_hpob_46.pt",
+            "minimize": 1,
+            "device": "cuda:0",
+            "fit_encoder_from_step": null,
+            "sample_only_valid": 1,
+            "pre_sample_size": 1000,
+            "num_candidates": 10,
+            "sobol_sampler": 1
+        }
+    ],
+}

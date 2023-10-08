@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pfns"
+version = "0.1.5"
+authors = [
+{name="Samuel Muller"},
+{name="Matthias Feurer"},
+{name="Noah Hollmann"},
+{name="Frank Hutter"},
+]
+
+description = "PFNs made ready for BO"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies=[
+        'torch>=1.9.0',
+        'scikit-learn>=0.24.2,<1.2',
+        'pyyaml>=5.4.1',
+        'numpy>=1.21.2',
+        'requests>=2.23.0',
+        'gpytorch>=1.5.0',
+        'configspace>=0.4.21',
+        #'seaborn==0.11',
+        'tqdm>=4.62.1',
+        'botorch>=0.7.2',
+        'bayesmark>=0.0.8',
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[tool.hatch.build]
+exclude = [
+  "*.gz",
+  "*.pt",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/automl/PFNs4BO"

@@ -5,7 +5,7 @@
 
 This way of installing allows you to use the package everywhere and still be able to edit files.
 ```bash
-pip install . -e
+pip install -e .
 ```
 
 ### Get Started

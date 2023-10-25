@@ -13,7 +13,7 @@ pip install -e .
 
 ### Get Started
 
-Check out our [Getting Started Notebook](Getting_Started_With_PFNs.ipynb).
+Check out our [Getting Started Colab](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf).
 
 
 ### BO

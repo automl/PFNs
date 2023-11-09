@@ -147,7 +147,9 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
         tqdm_iter = tqdm(range(len(dl)), desc='Training Epoch') if rank==0 and progress_bar else None # , disable=not verbose
 
         for batch, full_data in enumerate(dl):
-            data, targets, single_eval_pos = (full_data.style, full_data.x, full_data.y), full_data.target_y, full_data.single_eval_pos
+            data = (full_data.style.to(device), full_data.x.to(device), full_data.y.to(device))
+            targets = full_data.target_y.to(device)
+            single_eval_pos = full_data.single_eval_pos
 
             def get_metrics():
                 return total_loss / steps_per_epoch, (

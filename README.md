@@ -1,10 +1,10 @@
 # PFNs
 
-Prior-data Fitted Networks (PFNs, https://arxiv.org/abs/2112.10510) are transformer encoders trained to perform supervised in-context learning on randomly drawn from a prior.
+Prior-data Fitted Networks (PFNs, https://arxiv.org/abs/2112.10510) are transformer encoders trained to perform supervised in-context learning on datasets randomly drawn from a prior.
 Our priors can in general be described by a function that samples a datasets, or more generally a batch of datasets.
 The PFN is then trained to predict a hold-out set of labels, given the rest of the dataset.
 
-The pseudo code for a simple prior that would train a PFN that does 1d ridge regression, could be something like this:
+The pseudo code for a simple prior that would yield a PFN that does 1d ridge regression on datasets with 100 elements, could be something like this:
 
 ```python
 def get_dataset_sample():

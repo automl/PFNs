@@ -1,5 +1,21 @@
 # PFNs
 
+Prior-data Fitted Networks (PFNs, https://arxiv.org/abs/2112.10510) are transformer encoders trained to perform supervised in-context learning on randomly drawn from a prior.
+Our priors can in general be described by a function that samples a datasets, or more generally a batch of datasets.
+The PFN is then trained to predict a hold-out set of labels, given the rest of the dataset.
+
+The pseudo code for a simple prior that would train a PFN that does 1d ridge regression, could be something like this:
+
+```python
+def get_dataset_sample():
+    x = RandomUniform(100,1)
+    a = RandomNormal()
+    b = RandomNormal()
+    y = a * x + b
+    return x, y
+```
+
+Check out our [tutorial](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf) to train your own ridge regression PFN.
 
 ### Install with pip
 

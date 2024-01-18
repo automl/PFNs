@@ -35,7 +35,7 @@ For loading the pretrained TabPFN transformer model for classification and use i
 ```python
 
 # Load pretrained-model
-current_path = ..
+current_path = "Path/to/PFNs"
 classifier = PFNClassifier(base_path=current_path, model_string="prior_diff_real_checkpoint_n_0_epoch_42.cpkt")
 
 # Fit and evaluate

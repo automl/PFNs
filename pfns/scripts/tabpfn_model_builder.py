@@ -47,8 +47,6 @@ def load_model_only_inference(path, filename, device='cpu'):
     model_state = {k.replace(module_prefix, ''): v for k, v in model_state.items()}
     for key in list(model_state.keys()):
         model_state[key.replace( 'decoder','decoder_dict.standard')] = model_state.pop(key)
-    print(model_state.keys())
-    print(model.state_dict().keys())
     model.load_state_dict(model_state)
     model.to(device)
     model.eval()

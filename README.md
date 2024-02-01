@@ -31,6 +31,21 @@ pip install -e .
 
 Check out our [Getting Started Colab](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf).
 
+For loading the pretrained TabPFN transformer model for classification and use it for evaluation:
+```python
+
+# Load pretrained-model
+current_path = "Path/to/PFNs"
+classifier = PFNClassifier(base_path=current_path, model_string="prior_diff_real_checkpoint_n_0_epoch_42.cpkt")
+
+# Fit and evaluate
+task_type = 'multiclass'
+classifier.fit(train_xs, train_ys)
+if task_type == 'multiclass':
+    prediction_ = classifier.predict_proba(test_xs) # For survival [:, 1:]
+else:
+    prediction_ = classifier.predict(test_xs)
+```
 
 ### BO
 

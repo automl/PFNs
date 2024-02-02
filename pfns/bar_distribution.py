@@ -1,3 +1,9 @@
+"""
+The distributions here are piece-wise continuous distribution (BarDistribution)
+and a piece-wise continuous distribution with half-normals on each side, s.t. it has support for (-inf,inf), named FullSupportBarDistribution.
+Both of these distributions are described in the "Transformers Can Do Bayesian Inference" paper as Riemann Distribution.
+"""
+
 from .utils import print_once
 
 import torch

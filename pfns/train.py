@@ -39,7 +39,7 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
     using_dist, rank, device = init_dist(device)
     single_eval_pos_gen = single_eval_pos_gen if callable(single_eval_pos_gen) else lambda: single_eval_pos_gen
 
-    if not isinstance(priordataloader_class_or_get_batch, prior.PriorDataLoader):
+    if not issubclass(priordataloader_class_or_get_batch, prior.PriorDataLoader):
         priordataloader_class = priors.utils.get_batch_to_dataloader(priordataloader_class_or_get_batch)
     else:
         priordataloader_class = priordataloader_class_or_get_batch

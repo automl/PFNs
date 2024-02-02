@@ -88,7 +88,7 @@ def load_model_workflow(i, e, add_name, base_path, device='cpu', eval_addition='
     return model, c, results_file
 
 
-class PFNClassifier(BaseEstimator, ClassifierMixin):
+class TabPFNClassifier(BaseEstimator, ClassifierMixin):
 
     models_in_memory = {}
 

@@ -31,13 +31,20 @@ pip install -e .
 
 Check out our [Getting Started Colab](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf).
 
-For loading the pretrained TabPFN transformer model for classification and use it for evaluation:
+### Tabular Data
+
+
+For loading the pretrained TabPFN transformer model for classification and use it for evaluation, you can download the model like this
+
 ```python
-
+import torch
+from pfns.scripts.tabpfn_interface import TabPFNClassifier
 # Load pretrained-model
-current_path = "Path/to/PFNs"
-classifier = PFNClassifier(base_path=current_path, model_string="prior_diff_real_checkpoint_n_0_epoch_42.cpkt")
+classifier = TabPFNClassifier(base_path='.', model_string="prior_diff_real_checkpoint_n_0_epoch_42.cpkt")
 
+train_xs = torch.rand(100,2)
+test_xs = torch.rand(100,2)
+train_ys = train_xs.mean(1) > .5
 # Fit and evaluate
 task_type = 'multiclass'
 classifier.fit(train_xs, train_ys)
@@ -46,6 +53,7 @@ if task_type == 'multiclass':
 else:
     prediction_ = classifier.predict(test_xs)
 ```
+
 
 ### BO
 

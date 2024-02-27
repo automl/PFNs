@@ -132,8 +132,9 @@ class BarDistribution(nn.Module):
         return self.icdf(logits, rest_prob)
 
     def mode(self, logits):
-        mode_inds = logits.argmax(-1)
-        bucket_means = self.borders[:-1] + self.bucket_widths/2
+        density = logits.softmax(-1) / self.bucket_widths
+        mode_inds = density.argmax(-1)
+        bucket_means = self.borders[:-1] + self.bucket_widths / 2
         return bucket_means[mode_inds]
 
     def ei(self, logits, best_f, maximize=True): # logits: evaluation_points x batch x feature_dim

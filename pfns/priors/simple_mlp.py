@@ -54,7 +54,7 @@ class MLP(torch.nn.Module):
         for linear in self.linears[:-1]:
             x = linear(x)
             x = x + torch.randn_like(x) * self.preactivation_noise_std
-            x = torch.tanh(x)
+            x = self.activation(x)
         x = self.linears[-1](x)
         return x
 

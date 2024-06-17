@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import time
 import yaml
+import inspect
 from contextlib import nullcontext
 from tqdm import tqdm
 
@@ -39,10 +40,11 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
     using_dist, rank, device = init_dist(device)
     single_eval_pos_gen = single_eval_pos_gen if callable(single_eval_pos_gen) else lambda: single_eval_pos_gen
 
-    if not issubclass(priordataloader_class_or_get_batch, prior.PriorDataLoader):
-        priordataloader_class = priors.utils.get_batch_to_dataloader(priordataloader_class_or_get_batch)
-    else:
+    if inspect.isclass(priordataloader_class_or_get_batch) and issubclass(priordataloader_class_or_get_batch, prior.PriorDataLoader):
         priordataloader_class = priordataloader_class_or_get_batch
+    else:
+        priordataloader_class = priors.utils.get_batch_to_dataloader(priordataloader_class_or_get_batch)
+        
 
     def eval_pos_seq_len_sampler():
         single_eval_pos = single_eval_pos_gen()

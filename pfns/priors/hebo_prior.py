@@ -1,8 +1,4 @@
-import time
-import functools
 import random
-import math
-import traceback
 import warnings
 
 import numpy as np
@@ -10,11 +6,6 @@ import torch
 from torch import nn
 import gpytorch
 import botorch
-from botorch.models import SingleTaskGP
-from botorch.models.gp_regression import MIN_INFERRED_NOISE_LEVEL
-from botorch.fit import fit_gpytorch_model
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.priors.torch_priors import GammaPrior, UniformPrior, LogNormalPrior
 from gpytorch.means import ZeroMean
 from botorch.models.transforms.input import *

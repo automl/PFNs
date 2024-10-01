@@ -16,7 +16,7 @@ description = "PFNs made ready for BO"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies=[
-        'torch>=1.9.0',
+        'torch>=2.1.1',
         'scikit-learn>=0.24.2,<1.2',
         'pyyaml>=5.4.1',
         'numpy>=1.21.2,<2.0',

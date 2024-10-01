@@ -4,6 +4,7 @@ import argparse
 import random
 import datetime
 import itertools
+import re
 
 import torch
 from torch import nn
@@ -121,7 +122,13 @@ def set_locals_in_self(locals):
         if var_name != 'self': setattr(self, var_name, val)
 
 
-default_device = 'cuda:0' if torch.cuda.is_available() else 'cpu:0'
+def get_default_device():
+    """
+    Functional version of default_device, very helpful with submitit.
+    """
+    return "cuda:0" if torch.cuda.is_available() else "cpu:0"
+
+default_device = get_default_device()
 
 
 # Copied from StackOverflow, but we do an eval on the values additionally
@@ -290,8 +297,7 @@ def check_compatibility(dl):
 
 def product_dict(dic):
     keys = dic.keys()
-    vals = dic.values()
-    for instance in itertools.product(*vals):
+    for instance in itertools.product(*dic.values()):
         yield dict(zip(keys, instance))
 
 def to_tensor(x, device=None):
@@ -311,3 +317,71 @@ def normalize_by_used_features_f(x, num_features_used, num_features, normalize_w
     if normalize_with_sqrt:
         return x / (num_features_used / num_features)**(1 / 2)
     return x / (num_features_used / num_features)
+
+
+def get_all_times(j):
+    if j.stdout() is not None:
+        time_strs = re.findall(r"time:[ ]+([.0-9]+).*\|", j.stdout())
+        if time_strs:
+            return [float(t) for t in time_strs]
+    print("ignore job", j)
+    return None
+
+
+def get_all_losses(j):
+    if stdout := j.stdout():
+        try:
+            return [float(v) for v in re.findall("mean loss (.*) \|", stdout)]
+        except Exception as e:
+            print('could not get losses from stdout, because of ', e)
+            print(stdout)
+            raise e
+    return None
+
+
+def average_multiple_epochs(stdout, last_k=100):
+    mean_losses = get_all_losses(stdout)
+    return torch.tensor(mean_losses[-last_k:]).mean()
+
+
+def window_average(lis, window_size=10):
+    return [
+        sum(lis[i - window_size : i]) / window_size
+        for i in range(window_size, len(lis))
+    ]
+
+def tikzplotlib_fix_ncols(obj):
+    """
+    workaround for matplotlib 3.6 renamed legend's _ncol to _ncols, and (_us_dashOffset, _us_dashSeq) to _unscaled_dash_pattern
+    """
+    if hasattr(obj, "_ncols"):
+        obj._ncol = obj._ncols
+    if hasattr(obj, "_unscaled_dash_pattern"):
+        obj._us_dashOffset = obj._unscaled_dash_pattern[0]
+        obj._us_dashSeq = obj._unscaled_dash_pattern[1]
+    for child in obj.get_children():
+        tikzplotlib_fix_ncols(child)
+
+
+def tikzplotlib_save(
+    path, axis_width=r".9\textwidth", axis_height=r".9\textwidth", **tikzplotlib_kwargs
+):
+    """
+    This function can be used like `tikzplotlib.save` but adds a fix.
+    :param path:
+    :param axis_width:
+    :param axis_height:
+    :return:
+    """
+    import tikzplotlib
+    import matplotlib.pyplot as plt
+
+    assert path.endswith(".tex"), "path must end with .tex"
+
+    tikzplotlib_fix_ncols(plt.gcf())
+    tikzplotlib.save(
+        filepath=path,
+        axis_width=axis_width,
+        axis_height=axis_height,
+        **tikzplotlib_kwargs,
+    )

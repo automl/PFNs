@@ -20,7 +20,7 @@ Check out our [tutorial](https://colab.research.google.com/drive/12YpI99LkuFeWcu
 ### Install with pip
 
 This way of installing allows you to use the package everywhere and still be able to edit files.
-You should use a python version **>=3.9 and <=3.11**.
+You should use a python version **>=3.10 and <=3.11**.
 ```bash
 git clone https://github.com/automl/PFNs.git
 cd PFNs
@@ -61,6 +61,22 @@ There is a BO version of this repo, with pretrained models at [github.com/automl
 The two repos share a lot of the code, but the other is not anymore actively maintained.
 You can also train your own models with our tutorial notebook [here](Tutorial_Training_for_BO.ipynb).
 
+### Bayes' Power for Explaining In-Context Learning Generalizations
+
+This repository contains the code for the paper "Bayes' Power for Explaining In-Context Learning Generalizations".
+
+Install in editable mode:
+```bash
+pip install -e .
+```
+
+We have a set of notebooks in this repository to reproduce the results of our paper.
+
+- To reproduce the main ICL experiments, use the notebook `discrete_bayes.ipynb`.
+- To run the Tiny-MLP generalization experiments, where we evaluate extrapolation, use the notebook `Tiny_MLP_Generalization.ipynb`.
+- To run the Coin-Flipping experiments, where we show that the true posterior converges to the wrong probability, use the notebook `Cointhrowing_converging_to_wrong_posterior.ipynb`.
+- To see the GP converging to the wrong solution for a step function, use the notebook `GP_fitting_a_step.ipynb`.
+
 
 ### Cite the work
 
@@ -95,5 +111,15 @@ The BO version of PFNs was introduced in
   author={M{\"u}ller, Samuel and Feurer, Matthias and Hollmann, Noah and Hutter, Frank},
   journal={arXiv preprint arXiv:2305.17535},
   year={2023}
+}
+```
+
+The "Bayes' Power for Explaining In-Context Learning Generalizations" is
+```
+@article{muller2024bayes,
+  title={Bayes' Power for Explaining In-Context Learning Generalizations},
+  author={M{\"u}ller, Samuel and Hollmann, Noah and Hutter, Frank},
+  journal={arXiv preprint arXiv:2410.01565},
+  year={2024}
 }
 ```

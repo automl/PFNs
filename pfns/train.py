@@ -6,6 +6,7 @@ import yaml
 import inspect
 from contextlib import nullcontext
 from tqdm import tqdm
+import typing as tp
 
 import torch
 from torch import nn
@@ -27,13 +28,23 @@ class Losses():
     bce = nn.BCEWithLogitsLoss(reduction='none')
     get_BarDistribution = BarDistribution
 
+class TrainingResult(tp.NamedTuple):
+    # the mean loss in the last epoch across dataset sizes (single_eval_pos's)
+    total_loss: tp.Optional[float]
+    # the mean loss in the last epoch for each dataset size (single_eval_pos's)
+    total_positional_losses: tp.Optional[tp.List[float]]
+    # the trained model
+    model: nn.Module
+    # the dataloader used for training
+    data_loader: tp.Optional[torch.utils.data.DataLoader]
+
 
 def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, criterion, encoder_generator, emsize=200, nhid=200, nlayers=6, nhead=2, dropout=0.0,
           epochs=10, steps_per_epoch=100, batch_size=200, seq_len=10, lr=None, weight_decay=0.0, warmup_epochs=10, input_normalization=False,
           y_encoder_generator=None, pos_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
           aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
-          initializer=None, initialize_with_model=None, train_mixed_precision=False, efficient_eval_masking=True, border_decoder=None
+          initializer=None, initialize_with_model=None, train_mixed_precision=True, efficient_eval_masking=True, border_decoder=None
           , num_global_att_tokens=0, progress_bar=False, **model_extra_args):
     device = gpu_device if torch.cuda.is_available() else 'cpu:0'
     print(f'Using {device} device')
@@ -202,7 +213,6 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                             losses = criterion(output.flatten(), targets.flatten())
                         elif isinstance(criterion, nn.CrossEntropyLoss):
                             targets[torch.isnan(targets)] = -100
-                            print(f"{targets.min()=}, {targets.max()=}")
                             losses = criterion(output.reshape(-1, n_out), targets.long().flatten())
                         elif border_decoder is not None:
                             def apply_batch_wise_criterion(i):
@@ -314,7 +324,7 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
             model = model.module
             dl = None
-        return total_loss, total_positional_losses, model.to('cpu'), dl
+        return TrainingResult(total_loss, total_positional_losses, model.to('cpu'), dl)
 
 def _parse_args(config_parser, parser):
     # Do we have a config file to parse?

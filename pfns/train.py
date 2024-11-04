@@ -43,7 +43,7 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
           epochs=10, steps_per_epoch=100, batch_size=200, seq_len=10, lr=None, weight_decay=0.0, warmup_epochs=10, input_normalization=False,
           y_encoder_generator=None, pos_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
-          aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
+          aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, style_encoder=None, epoch_callback=None, step_callback=None, continue_model=None,
           initializer=None, initialize_with_model=None, train_mixed_precision=True, efficient_eval_masking=True, border_decoder=None
           , num_global_att_tokens=0, progress_bar=False, **model_extra_args):
     device = gpu_device if torch.cuda.is_available() else 'cpu:0'
@@ -68,9 +68,12 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                                **extra_prior_kwargs_dict)
 
     test_batch: prior.Batch = dl.get_test_batch()
-    style_def = test_batch.style
-    print(f'Style definition of first 3 examples: {style_def[:3] if style_def is not None else None}')
-    style_encoder = style_encoder_generator(style_def.shape[1], emsize) if (style_def is not None) else None
+    if style_encoder is None:
+        style_def = test_batch.style
+        print(f'Style definition of first 3 examples: {style_def[:3] if style_def is not None else None}')
+        style_encoder = style_encoder_generator(style_def.shape[1], emsize) if (style_def is not None) else None
+    else:
+        assert style_encoder_generator is None
     pos_encoder = (pos_encoder_generator or positional_encodings.NoPositionalEncoding)(emsize, seq_len * 2)
     if isinstance(criterion, nn.GaussianNLLLoss):
         n_out = 2

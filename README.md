@@ -68,6 +68,8 @@ pip install -e .[benchmarks]
 
 ### Bayes' Power for Explaining In-Context Learning Generalizations
 
+> This repository is frozen at the state of the submission all funcionality is copied to the actively maintained repository [github.com/automl/PFNs](https://github.com/automl/PFNs)
+
 This repository contains the code for the paper "Bayes' Power for Explaining In-Context Learning Generalizations".
 
 Install in editable mode:

@@ -27,6 +27,10 @@ dependencies=[
         'tqdm>=4.62.1',
         'botorch>=0.7.2',
         'bayesmark>=0.0.8',
+        "jupyter",
+        "matplotlib",
+        "seaborn",
+        "submitit @ git+https://github.com/automl/submitit@main",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

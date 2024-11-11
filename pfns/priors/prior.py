@@ -4,6 +4,7 @@ from dataclasses import dataclass, fields
 import torch
 from torch.utils.data import DataLoader
 
+
 @dataclass
 class Batch:
     """
@@ -16,6 +17,7 @@ class Batch:
         batch.test_attribute = test_attribute
     ```
     """
+
     # Required entries
     x: torch.Tensor
     y: torch.Tensor
@@ -26,12 +28,18 @@ class Batch:
     style_hyperparameter_values: Optional[torch.Tensor] = None
     single_eval_pos: Optional[torch.Tensor] = None
     causal_model_dag: Optional[object] = None
-    mean_prediction: Optional[bool] = None  # this controls whether to do mean prediction in bar_distribution for nonmyopic BO
+    mean_prediction: Optional[bool] = (
+        None  # this controls whether to do mean prediction in bar_distribution for nonmyopic BO
+    )
 
-    def other_filled_attributes(self, set_of_attributes: Set[str] = frozenset(('x', 'y', 'target_y'))):
-        return [f.name for f in fields(self)
-                if f.name not in set_of_attributes and
-                getattr(self, f.name) is not None]
+    def other_filled_attributes(
+        self, set_of_attributes: Set[str] = frozenset(("x", "y", "target_y"))
+    ):
+        return [
+            f.name
+            for f in fields(self)
+            if f.name not in set_of_attributes and getattr(self, f.name) is not None
+        ]
 
 
 def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
@@ -41,43 +49,86 @@ def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
     :param ignore_attributes: attributes to remove from the merged batch, treated as if they were None.
     :return:
     """
-    not_none_fields = [f.name for f in fields(batches[0]) if f.name not in ignore_attributes and getattr(batches[0], f.name) is not None]
-    assert all([set(not_none_fields) == set([f.name for f in fields(b) if f.name not in ignore_attributes and getattr(b, f.name) is not None]) for b in batches]), 'All batches must have the same fields!'
+    not_none_fields = [
+        f.name
+        for f in fields(batches[0])
+        if f.name not in ignore_attributes and getattr(batches[0], f.name) is not None
+    ]
+    assert all(
+        [
+            set(not_none_fields)
+            == set(
+                [
+                    f.name
+                    for f in fields(b)
+                    if f.name not in ignore_attributes
+                    and getattr(b, f.name) is not None
+                ]
+            )
+            for b in batches
+        ]
+    ), "All batches must have the same fields!"
     merge_funcs = {
-        'x': lambda xs: torch.cat(xs, 1),
-        'y': lambda ys: torch.cat(ys, 1),
-        'target_y': lambda target_ys: torch.cat(target_ys, 1),
-        'style': lambda styles: torch.cat(styles, 0),
+        "x": lambda xs: torch.cat(xs, 1),
+        "y": lambda ys: torch.cat(ys, 1),
+        "target_y": lambda target_ys: torch.cat(target_ys, 1),
+        "style": lambda styles: torch.cat(styles, 0),
     }
-    assert all(f in merge_funcs for f in not_none_fields), f'Unknown fields encountered in `safe_merge_batches_in_batch_dim`.'
-    return Batch(**{f: merge_funcs[f]([getattr(batch, f) for batch in batches]) for f in not_none_fields})
+    assert all(
+        f in merge_funcs for f in not_none_fields
+    ), f"Unknown fields encountered in `safe_merge_batches_in_batch_dim`."
+    return Batch(
+        **{
+            f: merge_funcs[f]([getattr(batch, f) for batch in batches])
+            for f in not_none_fields
+        }
+    )
 
 
 def merge_batches(*batches, ignore_attributes=[]):
     assert False, "TODO: isn't this broken!? because catting in dim 0 seems wrong!?"
+
     def merge_attribute(attr_name, batch_sizes):
         attr = [getattr(batch, attr_name) for batch in batches]
         if type(attr[0]) is list:
+
             def make_list(sublist, i):
                 if sublist is None:
                     return [None for _ in range(batch_sizes[i])]
                 return sublist
+
             return sum([make_list(sublist, i) for i, sublist in enumerate(attr)], [])
         elif type(attr[0]) is torch.Tensor:
             return torch.cat(attr, 0)
         else:
-            assert all(a is None for a in attr), f'Unknown type encountered in `merge_batches`.'\
-                                                 f'To ignore this, please add `{attr}` to the `ignore_attributes`.'\
-                                                 f'The following values are the problem: {attr_name}.'
+            assert all(a is None for a in attr), (
+                f"Unknown type encountered in `merge_batches`."
+                f"To ignore this, please add `{attr}` to the `ignore_attributes`."
+                f"The following values are the problem: {attr_name}."
+            )
             return None
-    batch_sizes = [batch.x.shape[0] for batch in batches]
-    return Batch(**{f.name: merge_attribute(f.name, batch_sizes) for f in fields(batches[0]) if f.name not in ignore_attributes})
 
+    batch_sizes = [batch.x.shape[0] for batch in batches]
+    return Batch(
+        **{
+            f.name: merge_attribute(f.name, batch_sizes)
+            for f in fields(batches[0])
+            if f.name not in ignore_attributes
+        }
+    )
 
 
 class PriorDataLoader(DataLoader, metaclass=ABCMeta):
     @abstractmethod
-    def __init__(self, num_steps, batch_size, eval_pos_seq_len_sampler, seq_len_maximum, device, **kwargs):
+    def __init__(
+        self,
+        num_steps,
+        batch_size,
+        eval_pos_seq_len_sampler,
+        seq_len_maximum,
+        device,
+        **kwargs,
+    ):
         """
 
         :param num_steps: int, first argument, the number of steps to take per epoch, i.e. iteration of the DataLoader

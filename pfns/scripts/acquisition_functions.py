@@ -1,11 +1,12 @@
 import contextlib
-
-from .. import transformer
-from .. import bar_distribution
-import torch
-import scipy
 import math
-from sklearn.preprocessing import power_transform, PowerTransformer
+
+import scipy
+import torch
+from sklearn.preprocessing import PowerTransformer, power_transform
+
+from .. import bar_distribution, transformer
+
 
 def log01(x, eps=.0000001, input_between_zero_and_one=False):
     logx = torch.log(x + eps)
@@ -439,8 +440,8 @@ def optimize_acq_w_lbfgs(model, known_x, known_y, num_grad_steps=15_000, num_can
         acq = general_acq_function(model, known_x, known_y, results.to(device), return_actual_ei=True, verbose=verbose, **kwargs)
         #print(acq)
         if verbose:
-            from scipy.stats import rankdata
             import matplotlib.pyplot as plt
+            from scipy.stats import rankdata
             if results.shape[1] == 2:
                 plt.scatter(results[:, 0], results[:, 1], c=rankdata(acq.cpu().numpy()), marker='x', cmap='RdBu')
                 plt.show()
@@ -452,6 +453,7 @@ def optimize_acq_w_lbfgs(model, known_x, known_y, num_grad_steps=15_000, num_can
     return best_x.detach(), results[acq_order].detach(), acq.cpu()[acq_order].detach(), x_initial_all.cpu()[all_order].detach(), x_initial_all_ei.cpu()[all_order].detach()
 
 from ..utils import to_tensor
+
 
 class TransformerBOMethod:
 

@@ -79,7 +79,7 @@ def get_batch(batch_size, *args, hyperparameters, get_batch, **kwargs):
         x=torch.cat([b.x for b in sub_batches], dim=1),
         y=torch.cat([b.y for b in sub_batches], dim=1),
         target_y=torch.cat([b.target_y for b in sub_batches], dim=1),
-        #log_likelihoods=torch.cat([b.log_likelihoods for b in sub_batches], dim=0) if sub_batches[0].log_likelihoods is not None else None,
+        # log_likelihoods=torch.cat([b.log_likelihoods for b in sub_batches], dim=0) if sub_batches[0].log_likelihoods is not None else None,
     )
 
     if hps_as_style := hyperparameters.get(
@@ -102,19 +102,32 @@ class HyperparameterNormalizer(torch.nn.Module):
         self.hyperparameters = hyperparameters
 
     def forward(self, x):
-        to_be_encoded_hyperparameters = self.hyperparameters["hyperparameter_sampling_add_hps_to_style"]
-        encoded_x = torch.zeros((x.shape[0], len(to_be_encoded_hyperparameters)), device=x.device, dtype=x.dtype)
+        to_be_encoded_hyperparameters = self.hyperparameters[
+            "hyperparameter_sampling_add_hps_to_style"
+        ]
+        encoded_x = torch.zeros(
+            (x.shape[0], len(to_be_encoded_hyperparameters)),
+            device=x.device,
+            dtype=x.dtype,
+        )
         for i, hp in enumerate(to_be_encoded_hyperparameters):
             hp_value = self.hyperparameters[hp]
-            if isinstance(hp_value, (CSH.UniformFloatHyperparameter, CSH.UniformIntegerHyperparameter)):
+            if isinstance(
+                hp_value,
+                (CSH.UniformFloatHyperparameter, CSH.UniformIntegerHyperparameter),
+            ):
                 min_value = hp_value.lower
                 max_value = hp_value.upper
                 if hp_value.log:
-                    encoded_x[:, i] = (torch.log(x[:, i]) - math.log(min_value)) / (math.log(max_value) - math.log(min_value))
+                    encoded_x[:, i] = (torch.log(x[:, i]) - math.log(min_value)) / (
+                        math.log(max_value) - math.log(min_value)
+                    )
                 else:
                     encoded_x[:, i] = (x[:, i] - min_value) / (max_value - min_value)
             else:
-                raise NotImplementedError(f"Hyperparameter type {type(hp_value)} not implemented")
+                raise NotImplementedError(
+                    f"Hyperparameter type {type(hp_value)} not implemented"
+                )
         # now encoded x is in [0, 1]
         # we need to normalize it to [-1, 1]
         encoded_x = 2 * encoded_x - 1

@@ -1,82 +1,213 @@
+from __future__ import annotations
+
+import inspect
+import math
+import multiprocessing
+import random
 import time
 import types
-import inspect
-import random
+from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass
 from functools import partial
+from typing import Any, Callable, ClassVar, Iterator, Optional, TypeVar, Tuple
 
-import torch
-
-from ..utils import set_locals_in_self, normalize_data
-from .prior import PriorDataLoader, Batch
-from torch import nn
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
+import numpy as np
 import scipy.stats as stats
-import math
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, IterableDataset
+
+from ..utils import normalize_data, set_locals_in_self
+from .prior import Batch, PriorDataLoader
+
+# Set multiprocessing start method to 'spawn'
+if multiprocessing.get_start_method(allow_none=True) != "spawn":
+    multiprocessing.set_start_method("spawn", force=True)
 
 
-def get_batch_to_dataloader(get_batch_method_):
-    # DL = partial(DL, get_batch_method=get_batch_method_)
-    class DL(PriorDataLoader):
-        get_batch_method = get_batch_method_
+class _BatchedIterableDataset(IterableDataset):
+    def __init__(
+        self,
+        get_batch_fn: Callable[..., Batch],
+        num_steps: int,
+        **get_batch_kwargs: Any,
+    ) -> None:
+        super().__init__()
+        self.get_batch_fn = get_batch_fn
+        self.num_steps = num_steps
+        self.get_batch_kwargs = get_batch_kwargs
 
-        # Caution, you might need to set self.num_features manually if it is not part of the args.
-        def __init__(self, num_steps, **get_batch_kwargs):
-            set_locals_in_self(locals())
+    def __iter__(self) -> Iterator[Batch]:
+        for _ in range(self.num_steps):
+            yield self.get_batch_fn(**self.get_batch_kwargs)
 
-            # The stuff outside the or is set as class attribute before instantiation.
-            self.num_features = (
-                get_batch_kwargs.get("num_features") or self.num_features
+
+@dataclass
+class SequentialEvalPosSampler:
+    """A sampler that generates sequential positions for evaluation"""
+    seq_len: int
+    num_positions: int
+    offset: int = 0
+    current_pos: int = 0
+    
+    def __call__(self) -> int:
+        pos = ((self.current_pos + self.offset) * self.seq_len) // (self.num_positions + 1)
+        self.current_pos = (self.current_pos + 1) % self.num_positions
+        return pos
+
+@dataclass
+class UniformSingleEvalPosSampler:
+    """A picklable sampler that generates uniform positions"""
+    seq_len: int
+    min_pos: int
+    max_pos: int
+    
+    def __call__(self) -> int:
+        return random.randint(self.min_pos, min(self.max_pos, self.seq_len - 1))
+
+
+@dataclass
+class EvalPosSeqLenSampler:
+    """A picklable class to handle eval position and sequence length sampling"""
+    seq_len: int
+    single_eval_pos_sampler: UniformSingleEvalPosSampler | None = None
+
+    def __call__(self) -> Tuple[int, int]:
+        if self.single_eval_pos_sampler is None:
+            # Default behavior: return middle position
+            return self.seq_len // 2, self.seq_len
+        return self.single_eval_pos_sampler(), self.seq_len
+
+
+def get_uniform_single_eval_pos_sampler(seq_len: int, min_pos: int = 1, max_pos: int | None = None) -> UniformSingleEvalPosSampler:
+    """Creates a sampler that uniformly samples positions between min_pos and max_pos"""
+    if max_pos is None:
+        max_pos = seq_len - 1
+    return UniformSingleEvalPosSampler(seq_len=seq_len, min_pos=min_pos, max_pos=max_pos)
+
+
+class ParallelPriorDataLoader(PriorDataLoader):
+    """A parallel data loader implementation that uses multiple workers."""
+
+    def __init__(
+        self,
+        num_steps: int,
+        batch_size: int,
+        eval_pos_seq_len_sampler: EvalPosSeqLenSampler,
+        seq_len_maximum: int,
+        device: str,
+        get_batch_method: Callable[..., Batch],
+        num_workers: int = 4,
+        **get_batch_kwargs: Any,
+    ) -> None:
+        self.get_batch_kwargs = get_batch_kwargs
+        self.num_steps = num_steps
+        self.batch_size = batch_size
+        self.epoch_count = 0
+        self.eval_pos_seq_len_sampler = eval_pos_seq_len_sampler
+        self.seq_len_maximum = seq_len_maximum
+        self.device = device
+        self.get_batch_method = get_batch_method
+
+        # Extract num_features from kwargs or class attribute
+        self.num_features = get_batch_kwargs.get("num_features", None)
+
+        super().__init__(
+            num_steps=num_steps,
+            batch_size=batch_size,
+            eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
+            seq_len_maximum=seq_len_maximum,
+            device=device,
+            **get_batch_kwargs,
+        )
+
+        self.dataset = _BatchedIterableDataset(
+            get_batch_fn=self.gbm,
+            num_steps=num_steps,
+            eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
+            **get_batch_kwargs,
+        )
+
+        self.dataloader = DataLoader(
+            dataset=self.dataset,
+            batch_size=None,  # We handle batching in get_batch
+            num_workers=8,
+            persistent_workers=True,
+            prefetch_factor=2,
+            worker_init_fn=self._worker_init_fn,
+            multiprocessing_context="spawn",  # Explicitly set spawn context
+        )
+
+    @staticmethod
+    def _worker_init_fn(worker_id: int) -> None:
+        # Set different random seeds for each worker
+        seed = torch.initial_seed() + worker_id
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    def gbm(
+        self,
+        *args: Any,
+        eval_pos_seq_len_sampler: EvalPosSeqLenSampler,
+        **kwargs: Any,
+    ) -> Batch:
+        single_eval_pos, seq_len = eval_pos_seq_len_sampler()
+
+        # Prepare all required arguments
+        batch_kwargs = {
+            "batch_size": self.batch_size,
+            "seq_len": seq_len,
+            "num_features": self.num_features,
+            "device": self.device,
+            "single_eval_pos": single_eval_pos,
+            **kwargs,
+        }
+
+        # Handle dynamic batch sizing
+        if "dynamic_batch_size" in kwargs and kwargs["dynamic_batch_size"] > 0:
+            batch_kwargs["batch_size"] = batch_kwargs["batch_size"] * math.floor(
+                math.pow(kwargs["seq_len_maximum"], kwargs["dynamic_batch_size"])
+                / math.pow(seq_len, kwargs["dynamic_batch_size"])
             )
-            self.epoch_count = 0
-            print("DataLoader.__dict__", self.__dict__)
 
-        @staticmethod
-        def gbm(*args, eval_pos_seq_len_sampler, **kwargs):
-            kwargs["single_eval_pos"], kwargs["seq_len"] = eval_pos_seq_len_sampler()
-            # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
-            # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
-            if (
-                "dynamic_batch_size" in kwargs
-                and kwargs["dynamic_batch_size"] > 0
-                and kwargs["dynamic_batch_size"] is not None
-            ):
-                kwargs["batch_size"] = kwargs["batch_size"] * math.floor(
-                    math.pow(kwargs["seq_len_maximum"], kwargs["dynamic_batch_size"])
-                    / math.pow(kwargs["seq_len"], kwargs["dynamic_batch_size"])
-                )
-            batch: Batch = get_batch_method_(*args, **kwargs)
-            if batch.single_eval_pos is None:
-                batch.single_eval_pos = kwargs["single_eval_pos"]
-            return batch
+        batch = self.get_batch_method(**batch_kwargs)
+        if batch.single_eval_pos is None:
+            batch.single_eval_pos = single_eval_pos
+        return batch
 
-        def __len__(self):
-            return self.num_steps
+    def get_test_batch(self, **kwargs: Any) -> Batch:
+        return self.gbm(
+            eval_pos_seq_len_sampler=self.eval_pos_seq_len_sampler,
+            epoch=self.epoch_count,
+            model=self.model if hasattr(self, "model") else None,
+            **{**self.get_batch_kwargs, **kwargs},
+        )
 
-        def get_test_batch(self, **kwargs):  # does not increase epoch_count
-            return self.gbm(
-                **self.get_batch_kwargs,
-                epoch=self.epoch_count,
-                model=self.model if hasattr(self, "model") else None,
-                **kwargs,
-            )
+    def __len__(self) -> int:
+        return self.num_steps
 
-        def __iter__(self):
-            assert hasattr(
-                self, "model"
-            ), "Please assign model with `dl.model = ...` before training."
-            self.epoch_count += 1
-            return iter(
-                self.gbm(
-                    **self.get_batch_kwargs,
-                    epoch=self.epoch_count - 1,
-                    model=self.model,
-                )
-                for _ in range(self.num_steps)
-            )
+    def __iter__(self) -> Iterator[Batch]:
+        assert hasattr(
+            self, "model"
+        ), "Please assign model with `dl.model = ...` before training."
+        self.epoch_count += 1
+        return iter(self.dataloader)
 
-    return DL
+
+def get_batch_to_dataloader(
+    get_batch_method_: Callable[..., Batch],
+) -> type[ParallelPriorDataLoader]:
+    """Factory function to create a ParallelPriorDataLoader with specific get_batch method"""
+
+    def create_loader(*args, **kwargs):
+        return ParallelPriorDataLoader(
+            *args, get_batch_method=get_batch_method_, **kwargs
+        )
+
+    return create_loader
 
 
 def plot_features(data, targets, fig=None, categorical=True, plot_diagonal=True):

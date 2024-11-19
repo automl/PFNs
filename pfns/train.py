@@ -18,6 +18,7 @@ from .bar_distribution import (
     get_custom_bar_dist,
 )
 from .priors import prior
+from .priors.utils import EvalPosSeqLenSampler, get_uniform_single_eval_pos_sampler
 from .transformer import TransformerModel
 from .utils import (
     get_cosine_schedule_with_warmup,
@@ -69,9 +70,8 @@ def train(
     decoder_dict={},
     extra_prior_kwargs_dict={},
     scheduler=get_cosine_schedule_with_warmup,
-    load_weights_from_this_state_dict=None,
     validation_period=10,
-    single_eval_pos_gen=None,
+    single_eval_pos_sampler=None,
     gpu_device="cuda:0",
     aggregate_k_gradients=1,
     verbose=True,
@@ -86,39 +86,47 @@ def train(
     efficient_eval_masking=True,
     border_decoder=None,
     num_global_att_tokens=0,
-    progress_bar=False,
+    progress_bar=True,
     **model_extra_args,
 ):
     device = gpu_device if torch.cuda.is_available() else "cpu:0"
     print(f"Using {device} device")
     using_dist, rank, device = init_dist(device)
-    single_eval_pos_gen = (
-        single_eval_pos_gen
-        if callable(single_eval_pos_gen)
-        else lambda: single_eval_pos_gen
+
+    # Create default sampler if none provided
+    if single_eval_pos_sampler is None:
+        single_eval_pos_sampler = get_uniform_single_eval_pos_sampler(
+            seq_len=seq_len,
+            min_pos=1
+        )
+
+    # Create a picklable sampler
+    eval_pos_sampler = EvalPosSeqLenSampler(
+        seq_len=seq_len,
+        single_eval_pos_sampler=single_eval_pos_sampler
     )
 
-    if inspect.isclass(priordataloader_class_or_get_batch) and issubclass(
-        priordataloader_class_or_get_batch, prior.PriorDataLoader
-    ):
-        priordataloader_class = priordataloader_class_or_get_batch
+    if isinstance(priordataloader_class_or_get_batch, type):
+        dl = priordataloader_class_or_get_batch(
+            num_steps=steps_per_epoch,
+            batch_size=batch_size,
+            eval_pos_seq_len_sampler=eval_pos_sampler,
+            seq_len_maximum=seq_len,
+            device=device,
+            **extra_prior_kwargs_dict,
+        )
     else:
         priordataloader_class = priors.utils.get_batch_to_dataloader(
             priordataloader_class_or_get_batch
         )
-
-    def eval_pos_seq_len_sampler():
-        single_eval_pos = single_eval_pos_gen()
-        return single_eval_pos, seq_len
-
-    dl = priordataloader_class(
-        num_steps=steps_per_epoch,
-        batch_size=batch_size,
-        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
-        seq_len_maximum=seq_len,
-        device=device,
-        **extra_prior_kwargs_dict,
-    )
+        dl = priordataloader_class(
+            num_steps=steps_per_epoch,
+            batch_size=batch_size,
+            eval_pos_seq_len_sampler=eval_pos_sampler,
+            seq_len_maximum=seq_len,
+            device=device,
+            **extra_prior_kwargs_dict,
+        )
 
     test_batch: prior.Batch = dl.get_test_batch()
     if style_encoder is None:
@@ -179,8 +187,6 @@ def train(
             **model_extra_args,
         )
     model.criterion = criterion
-    if load_weights_from_this_state_dict is not None:
-        model.load_state_dict(load_weights_from_this_state_dict)
     if initialize_with_model is not None:
         model.init_from_small_model(initialize_with_model)
 
@@ -454,6 +460,8 @@ def train(
                 )
 
             before_get_batch = time.time()
+            if (batch + 1) % steps_per_epoch == 0:
+                break
         return get_metrics()
 
     total_loss = float("inf")

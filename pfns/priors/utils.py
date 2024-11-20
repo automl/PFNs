@@ -3,7 +3,7 @@ import types
 import inspect
 import random
 from functools import partial
-from typing import Callable, Iterator, TypeAlias
+from typing import Callable, Iterator
 from typing_extensions import override
 
 import torch
@@ -21,7 +21,7 @@ from ..utils import (
     normalize_data,
     get_uniform_single_eval_pos_sampler,
 )
-from .prior import PriorDataLoader, Batch
+from .prior import Batch
 
 
 class _BatchedIterableDataset(IterableDataset[Batch]):
@@ -46,7 +46,7 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
             kwargs = dict(self.kwargs)
             kwargs["single_eval_pos"] = single_eval_pos
             b = self.f(**kwargs)
-            b.single_eval_pos = single_eval_pos 
+            b.single_eval_pos = single_eval_pos
             yield b
 
 
@@ -94,7 +94,9 @@ def get_batch_to_dataloader(get_batch_method_):
                 dataset=_BatchedIterableDataset(
                     f=self.get_batch_method,
                     **get_batch_kwargs,
-                    num_steps=num_steps // num_workers if num_workers > 0 else num_steps,
+                    num_steps=num_steps // num_workers
+                    if num_workers > 0
+                    else num_steps,
                 ),
                 collate_fn=identity,
                 timeout=0,

@@ -4,7 +4,7 @@ import random
 import torch
 from torch import nn
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, DotProduct, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF
 from .prior import Batch
 from .utils import get_batch_to_dataloader
 

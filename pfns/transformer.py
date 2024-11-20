@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn import Module, TransformerEncoder
 
-from .layer import TransformerEncoderLayer, _get_activation_fn
+from .layer import TransformerEncoderLayer
 from .utils import SeqBN, bool_mask_to_att_mask
 
 

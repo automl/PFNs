@@ -101,7 +101,7 @@ def load_openml_list(
             modifications["samples_capped"] = True
 
         if X.shape[0] < min_samples:
-            print(f"Too few samples left")
+            print("Too few samples left")
             continue
 
         if len(np.unique(y)) > max_num_classes:
@@ -110,7 +110,7 @@ def load_openml_list(
                 y = y[y < np.unique(y)[10]]
                 modifications["classes_capped"] = True
             else:
-                print(f"Too many classes")
+                print("Too many classes")
                 continue
 
         datasets += [

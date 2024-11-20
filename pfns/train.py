@@ -304,10 +304,10 @@ def train(
                             # this implies the prior uses a trailing 1 dimesnion
                             # below we assume this not to be the case
                             targets = targets.squeeze(-1)
-                        
+
                         if output.shape[0] == 0:
                             output = output.squeeze(0)
-                        
+
                         assert targets.shape == output.shape[:-1], (
                             f"Target shape {targets.shape} "
                             f"does not match output shape {output.shape}"
@@ -437,7 +437,7 @@ def train(
 
                         metrics_to_log = {
                             **metrics_to_log,
-                            **{f"loss": loss, "single_eval_pos": single_eval_pos},
+                            **{"loss": loss, "single_eval_pos": single_eval_pos},
                         }
                         if step_callback is not None and rank == 0:
                             step_callback(metrics_to_log)

@@ -1,7 +1,5 @@
-import io
 import os
 import pathlib
-import pickle
 import random
 from pathlib import Path
 
@@ -15,7 +13,7 @@ from sklearn.preprocessing import (
     RobustScaler,
 )
 from sklearn.utils import column_or_1d
-from sklearn.utils.multiclass import check_classification_targets, unique_labels
+from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 from torch.utils.checkpoint import checkpoint
 

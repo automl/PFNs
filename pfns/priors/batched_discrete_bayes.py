@@ -540,7 +540,6 @@ class Stroke(DiscretePrior):
         This computes p(y|x,latent) @ latent weights -> tensor[batch size, #classes]
         This function is only used for classification.
         """
-        import tqdm
 
         indices = torch.tensor(
             self.latents, device=self.device

@@ -76,7 +76,7 @@ def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
     }
     assert all(
         f in merge_funcs for f in not_none_fields
-    ), f"Unknown fields encountered in `safe_merge_batches_in_batch_dim`."
+    ), "Unknown fields encountered in `safe_merge_batches_in_batch_dim`."
     return Batch(
         **{
             f: merge_funcs[f]([getattr(batch, f) for batch in batches])

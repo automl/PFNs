@@ -5,7 +5,7 @@ from bayesmark.experiment import experiment_main
 from bayesmark.space import JointSpace
 import torch
 import logging
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 from sklearn.compose import ColumnTransformer
 from scipy.special import logit, expit
@@ -46,7 +46,7 @@ class PFNOptimizer(AbstractOptimizer):
         api_config : dict-like of dict-like
             Configuration of the optimization variables. See API description.
         """
-        assert not "fit_encoder" in acqf_kwargs
+        assert "fit_encoder" not in acqf_kwargs
         AbstractOptimizer.__init__(self, api_config)
         # Do whatever other setup is needed
         # ...
@@ -455,7 +455,6 @@ def test():
 
     # Setup optimizer
     api_config = function_instance.get_api_config()
-    import os
     # check is file
 
     config = {
@@ -482,10 +481,8 @@ def test():
 
 if __name__ == "__main__":
     import uuid
-    from bayesmark.serialize import XRSerializer
     from bayesmark.cmd_parse import CmdArgs
     import bayesmark.cmd_parse as cmd
-    import bayesmark.constants as cc
 
     description = "Run a study with one benchmark function and an optimizer"
     args = cmd.parse_args(cmd.experiment_parser(description))

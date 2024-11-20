@@ -258,7 +258,7 @@ def make_metric_matrix(global_results, methods, pos, name, ds):
             result += [
                 [global_results[m][d[0] + "_" + name + "_at_" + str(pos)] for d in ds]
             ]
-        except Exception as e:
+        except Exception:
             # raise(e)
             result += [[np.nan]]
     result = np.array(result)

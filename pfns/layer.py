@@ -1,7 +1,6 @@
 from functools import partial
 
 import torch
-from torch import nn
 from torch.nn.modules.transformer import (
     Dropout,
     LayerNorm,

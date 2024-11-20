@@ -3,26 +3,85 @@ import types
 import inspect
 import random
 from functools import partial
+from typing import Callable, Iterator, TypeAlias
+from typing_extensions import override
 
 import torch
-
-from ..utils import set_locals_in_self, normalize_data
-from .prior import PriorDataLoader, Batch
 from torch import nn
+from torch.utils.data import DataLoader, IterableDataset
 import numpy as np
 import matplotlib.pyplot as plt
+import torch.distributed as dist
 import matplotlib.gridspec as gridspec
 import scipy.stats as stats
 import math
 
+from ..utils import (
+    set_locals_in_self,
+    normalize_data,
+    get_uniform_single_eval_pos_sampler,
+)
+from .prior import PriorDataLoader, Batch
+
+
+class _BatchedIterableDataset(IterableDataset[Batch]):
+    def __init__(
+        self,
+        f: Callable[[], Batch],
+        num_steps: int,
+        **kwargs,
+    ) -> None:
+        super().__init__()
+        self.f = f
+        self.kwargs = kwargs
+        self.num_steps = num_steps
+
+    @override
+    def __iter__(self) -> Iterator[Batch]:
+        for _ in range(self.num_steps):
+            single_eval_pos = get_uniform_single_eval_pos_sampler(
+                self.kwargs["seq_len"] - 1
+            )()
+
+            kwargs = dict(self.kwargs)
+            kwargs["single_eval_pos"] = single_eval_pos
+            b = self.f(**kwargs)
+            b.single_eval_pos = single_eval_pos 
+            yield b
+
+
+def identity(x: Batch) -> Batch:
+    # return x[0]
+    return x[0]
+
+
+def worker_init_fn(worker_id):
+    worker_seed = worker_id
+
+    # Get the rank of the current process
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    else:
+        rank = 0
+
+    # Combine worker_id and rank to create a unique seed
+    seed = (
+        worker_seed + rank * 1000
+    )  # Multiply by 1000 to ensure different ranges for each GPU
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+
 
 def get_batch_to_dataloader(get_batch_method_):
     # DL = partial(DL, get_batch_method=get_batch_method_)
-    class DL(PriorDataLoader):
+    class DL(DataLoader):
         get_batch_method = get_batch_method_
 
         # Caution, you might need to set self.num_features manually if it is not part of the args.
-        def __init__(self, num_steps, **get_batch_kwargs):
+        def __init__(self, num_steps, num_workers=4, **get_batch_kwargs):
             set_locals_in_self(locals())
 
             # The stuff outside the or is set as class attribute before instantiation.
@@ -31,10 +90,27 @@ def get_batch_to_dataloader(get_batch_method_):
             )
             self.epoch_count = 0
             print("DataLoader.__dict__", self.__dict__)
+            super().__init__(
+                dataset=_BatchedIterableDataset(
+                    f=self.get_batch_method,
+                    **get_batch_kwargs,
+                    num_steps=num_steps // num_workers if num_workers > 0 else num_steps,
+                ),
+                collate_fn=identity,
+                timeout=0,
+                generator=None,
+                prefetch_factor=2 if num_workers > 0 else None,
+                num_workers=num_workers,
+                persistent_workers=True if num_workers > 0 else False,
+                pin_memory=True,
+                pin_memory_device="cuda",
+                worker_init_fn=worker_init_fn,
+                multiprocessing_context="spawn" if num_workers > 0 else None,
+                # **get_batch_kwargs,
+            )
 
         @staticmethod
-        def gbm(*args, eval_pos_seq_len_sampler, **kwargs):
-            kwargs["single_eval_pos"], kwargs["seq_len"] = eval_pos_seq_len_sampler()
+        def gbm(*args, **kwargs):
             # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
             # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
             if (
@@ -46,9 +122,12 @@ def get_batch_to_dataloader(get_batch_method_):
                     math.pow(kwargs["seq_len_maximum"], kwargs["dynamic_batch_size"])
                     / math.pow(kwargs["seq_len"], kwargs["dynamic_batch_size"])
                 )
+
             batch: Batch = get_batch_method_(*args, **kwargs)
             if batch.single_eval_pos is None:
-                batch.single_eval_pos = kwargs["single_eval_pos"]
+                batch.single_eval_pos = get_uniform_single_eval_pos_sampler(
+                    kwargs["seq_len"] - 1
+                )()
             return batch
 
         def __len__(self):
@@ -62,19 +141,19 @@ def get_batch_to_dataloader(get_batch_method_):
                 **kwargs,
             )
 
-        def __iter__(self):
-            assert hasattr(
-                self, "model"
-            ), "Please assign model with `dl.model = ...` before training."
-            self.epoch_count += 1
-            return iter(
-                self.gbm(
-                    **self.get_batch_kwargs,
-                    epoch=self.epoch_count - 1,
-                    model=self.model,
-                )
-                for _ in range(self.num_steps)
-            )
+        # def __iter__(self):
+        # assert hasattr(
+        #     self, "model"
+        # ), "Please assign model with `dl.model = ...` before training."
+        # self.epoch_count += 1
+        # return iter(
+        #     self.gbm(
+        #         **self.get_batch_kwargs,
+        #         epoch=self.epoch_count - 1,
+        #         # model=self.model,
+        #     )
+        #     for _ in range(self.num_steps)
+        # )
 
     return DL
 

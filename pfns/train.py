@@ -87,6 +87,7 @@ def train(
     border_decoder=None,
     num_global_att_tokens=0,
     progress_bar=False,
+    num_workers=8,
     **model_extra_args,
 ):
     device = gpu_device if torch.cuda.is_available() else "cpu:0"
@@ -114,9 +115,9 @@ def train(
     dl = priordataloader_class(
         num_steps=steps_per_epoch,
         batch_size=batch_size,
-        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
-        seq_len_maximum=seq_len,
+        seq_len=seq_len,
         device=device,
+        num_workers=num_workers,
         **extra_prior_kwargs_dict,
     )
 
@@ -303,9 +304,13 @@ def train(
                             # this implies the prior uses a trailing 1 dimesnion
                             # below we assume this not to be the case
                             targets = targets.squeeze(-1)
+                        
+                        if output.shape[0] == 0:
+                            output = output.squeeze(0)
+                        
                         assert targets.shape == output.shape[:-1], (
                             f"Target shape {targets.shape} "
-                            "does not match output shape {output.shape}"
+                            f"does not match output shape {output.shape}"
                         )
                         if isinstance(criterion, nn.GaussianNLLLoss):
                             assert (

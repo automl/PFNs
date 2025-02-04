@@ -3,7 +3,7 @@ import warnings
 
 import numpy as np
 import torch
-from typing import List
+from typing import List, Optional, Union
 from torch import nn
 import gpytorch
 import botorch

@@ -16,21 +16,25 @@ description = "PFNs made ready for BO"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies=[
-        'torch>=2.1.1',
-        'scikit-learn>=0.24.2,<1.2',
+        'torch>=2.5',
+        'scikit-learn>=0.24.2',
         'pyyaml>=5.4.1',
-        'numpy>=1.21.2,<2.0',
+        'numpy>=1.21.2',
         'requests>=2.23.0',
         'gpytorch>=1.5.0',
         'configspace>=0.4.21',
-        #'seaborn==0.11',
         'tqdm>=4.62.1',
         'botorch>=0.7.2',
-        'bayesmark>=0.0.8',
+        'matplotlib>=3.10.1',
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+benchmarks = [
+    "bayesmark>=0.0.8",
 ]
 
 [tool.hatch.build]

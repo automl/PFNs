@@ -61,6 +61,11 @@ There is a BO version of this repo, with pretrained models at [github.com/automl
 The two repos share a lot of the code, but the other is not anymore actively maintained.
 You can also train your own models with our tutorial notebook [here](Tutorial_Training_for_BO.ipynb).
 
+To run all BayesOpt experiments, please install this package with the `benchmarks` option:
+```bash
+pip install -e .[benchmarks]
+```
+
 ### Bayes' Power for Explaining In-Context Learning Generalizations
 
 This repository contains the code for the paper "Bayes' Power for Explaining In-Context Learning Generalizations".
@@ -123,3 +128,4 @@ The "Bayes' Power for Explaining In-Context Learning Generalizations" is
   year={2024}
 }
 ```
+

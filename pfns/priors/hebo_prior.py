@@ -1,7 +1,7 @@
 import random
 import warnings
 
-import numpy as np
+from typing import List, Optional, Union
 import torch
 from typing import List, Optional, Union
 from torch import nn
@@ -352,7 +352,7 @@ def get_model(x, y, hyperparameters: dict, sample=True):
     # assume mean 0 always!
     if len(y.shape) < len(x.shape):
         y = y.unsqueeze(-1)
-    model = botorch.models.SingleTaskGP(x, y, likelihood, covar_module=covar_module, input_transform=warp_tf)
+    model = botorch.models.SingleTaskGP(x, y, likelihood=likelihood, covar_module=covar_module, input_transform=warp_tf)
     model.mean_module = ZeroMean(x.shape[:-2])
     model.to(device)
     likelihood.to(device)

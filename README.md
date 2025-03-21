@@ -57,7 +57,7 @@ else:
 
 ### BO
 
-There is a BO version of this repo, with pretrained models at [github.com/automl/PFNs4BO](github.com/automl/PFNs4BO).
+There is a BO version of this repo, with pretrained models at [github.com/automl/PFNs4BO](https://github.com/automl/PFNs4BO).
 The two repos share a lot of the code, but the other is not anymore actively maintained.
 You can also train your own models with our tutorial notebook [here](Tutorial_Training_for_BO.ipynb).
 

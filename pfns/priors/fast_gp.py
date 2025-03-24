@@ -5,7 +5,6 @@ from torch import nn
 import gpytorch
 
 from .prior import Batch
-from .utils import get_batch_to_dataloader
 from ..utils import default_device
 
 
@@ -154,7 +153,6 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
 
     return Batch(x=x.transpose(0, 1), y=sample, target_y=target_sample)
 
-DataLoader = get_batch_to_dataloader(get_batch)
 
 def get_model_on_device(x,y,hyperparameters,device):
     model, likelihood = get_model(x, y, hyperparameters)

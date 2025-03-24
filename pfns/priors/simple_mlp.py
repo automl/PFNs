@@ -8,7 +8,6 @@ import numpy as np
 
 from ..utils import default_device
 from .prior import Batch
-from .utils import get_batch_to_dataloader
 
 
 class MLP(torch.nn.Module):
@@ -72,7 +71,7 @@ def sample_input(input_sampling_setting, batch_size, seq_len, num_features, devi
 
 
 @torch.no_grad()
-def get_batch(batch_size, seq_len, num_features, hyperparameters, device=default_device, num_outputs=1, **kwargs):
+def get_batch(batch_size, seq_len, num_features, hyperparameters, device=default_device, num_outputs=1, n_targets_per_input=1, **kwargs):
     if hyperparameters is None:
         hyperparameters = {
             'mlp_num_layers': 2,
@@ -81,7 +80,7 @@ def get_batch(batch_size, seq_len, num_features, hyperparameters, device=default
             'mlp_sparseness': 0.2,
             'mlp_input_sampling': 'normal',
             'mlp_output_noise': 0.0,
-            'mlp_noisy_targets': False,
+            'mlp_noisy_targets': True,
             'mlp_preactivation_noise_std': 0.0,
         }
 
@@ -92,31 +91,20 @@ def get_batch(batch_size, seq_len, num_features, hyperparameters, device=default
                 num_outputs, hyperparameters['mlp_init_std'], hyperparameters['mlp_sparseness'],
                 hyperparameters['mlp_preactivation_noise_std'], hyperparameters.get('activation', 'tanh')).to(device)
 
-    no_noise_model = MLP(num_features, hyperparameters['mlp_num_layers'], hyperparameters['mlp_num_hidden'],
-                num_outputs, hyperparameters['mlp_init_std'], hyperparameters['mlp_sparseness'],
-                0., hyperparameters.get('activation', 'tanh')).to(device)
-
     ys = []
-    targets = []
-    for x_ in x_for_mlp:
+    for x_ in x_for_mlp:  # iterating across batch size
         model.reset_parameters()
-        y = model(x_ / math.sqrt(num_features))
-        ys.append(y.unsqueeze(1))
-        if not hyperparameters.get('mlp_preactivation_noise_in_targets', True):
-            assert not hyperparameters['mlp_noisy_targets']
-            no_noise_model.load_state_dict(model.state_dict())
-            target = no_noise_model(x_ / math.sqrt(num_features))
-            targets.append(target.unsqueeze(1))
+        y = model(x_[None].repeat(n_targets_per_input, 1, 1) / math.sqrt(num_features)).squeeze(-1)
+        ys.append(y.T)
 
-    y = torch.cat(ys, dim=1)
-    targets = torch.cat(targets, dim=1) if targets else y
+    y = torch.stack(ys, dim=1)
+    targets = y
 
     noisy_y = y + torch.randn_like(y) * hyperparameters['mlp_output_noise']
 
     #return x.transpose(0, 1), noisy_y, (noisy_y if hyperparameters['mlp_noisy_targets'] else targets)
-    return Batch(x.transpose(0, 1), noisy_y, (noisy_y if hyperparameters['mlp_noisy_targets'] else targets))
+    return Batch(x.transpose(0, 1), noisy_y[:,:,:1], (noisy_y if hyperparameters['mlp_noisy_targets'] else targets))
 
-DataLoader = get_batch_to_dataloader(get_batch)
 
 
 

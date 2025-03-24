@@ -110,6 +110,11 @@ class BarDistribution(nn.Module):
         right_border = self.borders[idx+1]
         return left_border + (right_border - left_border) * rest_prob / probs.gather(-1, idx[..., None]).squeeze(-1)
 
+    def sample(self, logits, t=1.0):
+        probs = torch.rand(*logits.shape[:-1])
+        probs_flat = probs.flatten()
+        return torch.stack([self.icdf(logits.view(-1, *logits.shape[-1:])[i] / t, p) for i, p in enumerate(probs_flat)]).view(*logits.shape[:-1])
+
     def quantile(self, logits, center_prob=.682):
         side_probs = (1.-center_prob)/2
         return torch.stack((self.icdf(logits, side_probs), self.icdf(logits, 1.-side_probs)),-1)

@@ -3,7 +3,6 @@ import torch
 
 import utils
 from .prior import Batch
-from .utils import get_batch_to_dataloader
 from ..utils import default_device
 
 def get_batch(batch_size, seq_len, num_features, device=default_device
@@ -41,5 +40,3 @@ def get_batch(batch_size, seq_len, num_features, device=default_device
         print({k: v.shape for k,v in sample.items()})
 
     return Batch(**sample)
-
-DataLoader = get_batch_to_dataloader(get_batch)

@@ -3,6 +3,7 @@ import types
 import inspect
 import random
 from functools import partial
+from copy import deepcopy
 
 import torch
 
@@ -15,47 +16,85 @@ import matplotlib.gridspec as gridspec
 import scipy.stats as stats
 import math
 
-def get_batch_to_dataloader(get_batch_method_):
-    #DL = partial(DL, get_batch_method=get_batch_method_)
-    class DL(PriorDataLoader):
-        get_batch_method = get_batch_method_
+class StandardDataLoader(PriorDataLoader):
+    # Caution, you might need to set self.num_features manually if it is not part of the args.
+    def __init__(self, get_batch_method, num_steps, **get_batch_kwargs):
+        set_locals_in_self(locals())
 
-        # Caution, you might need to set self.num_features manually if it is not part of the args.
-        def __init__(self, num_steps, **get_batch_kwargs):
-            set_locals_in_self(locals())
+        # The stuff outside the or is set as class attribute before instantiation.
+        self.num_features = get_batch_kwargs.get('num_features') or self.num_features
+        self.epoch_count = 0
+        self.grad_magnitues_and_infos = None
+        print('DataLoader.__dict__', self.__dict__)
 
-            # The stuff outside the or is set as class attribute before instantiation.
-            self.num_features = get_batch_kwargs.get('num_features') or self.num_features
-            self.epoch_count = 0
-            print('DataLoader.__dict__', self.__dict__)
+    def gbm(self, *args, eval_pos_seq_len_sampler, **kwargs):
+        kwargs['single_eval_pos'], kwargs['seq_len'] = eval_pos_seq_len_sampler()
+        # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
+        # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
+        if kwargs.get('dynamic_batch_size'):
+            kwargs['batch_size'] = kwargs['batch_size'] * math.floor(
+                math.pow(kwargs['seq_len_maximum'], kwargs['dynamic_batch_size'])
+                / math.pow(kwargs['seq_len'], kwargs['dynamic_batch_size'])
+            )
+        batch: Batch = self.get_batch_method(*args, **kwargs)
+        if batch.single_eval_pos is None:
+            batch.single_eval_pos = kwargs['single_eval_pos']
+        return batch
 
-        @staticmethod
-        def gbm(*args, eval_pos_seq_len_sampler, **kwargs):
-            kwargs['single_eval_pos'], kwargs['seq_len'] = eval_pos_seq_len_sampler()
-            # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
-            # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
-            if 'dynamic_batch_size' in kwargs and kwargs['dynamic_batch_size'] > 0 and kwargs['dynamic_batch_size'] is not None:
-                kwargs['batch_size'] = kwargs['batch_size'] * math.floor(
-                    math.pow(kwargs['seq_len_maximum'], kwargs['dynamic_batch_size'])
-                    / math.pow(kwargs['seq_len'], kwargs['dynamic_batch_size'])
-                )
-            batch: Batch = get_batch_method_(*args, **kwargs)
-            if batch.single_eval_pos is None:
-                batch.single_eval_pos = kwargs['single_eval_pos']
-            return batch
+    def __len__(self):
+        return self.num_steps
 
-        def __len__(self):
-            return self.num_steps
+    def get_test_batch(self, **kwargs): # does not increase epoch_count
+        return self.gbm(**self.get_batch_kwargs, epoch=self.epoch_count, model=self.model if hasattr(self, 'model') else None, **kwargs)
 
-        def get_test_batch(self, **kwargs): # does not increase epoch_count
-            return self.gbm(**self.get_batch_kwargs, epoch=self.epoch_count, model=self.model if hasattr(self, 'model') else None, **kwargs)
+    def __iter__(self):
+        assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
+        self.epoch_count += 1
+        return iter(self.gbm(**self.get_batch_kwargs, epoch=self.epoch_count - 1, model=self.model) for _ in range(self.num_steps))
 
-        def __iter__(self):
-            assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
-            self.epoch_count += 1
-            return iter(self.gbm(**self.get_batch_kwargs, epoch=self.epoch_count - 1, model=self.model) for _ in range(self.num_steps))
 
-    return DL
+class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
+    def __init__(self, get_batch_method, num_steps, importance_hyperparameter: str, importance_hyperparameter_options: list, **get_batch_kwargs):
+        # default assumption is that we want to sample them all equally
+        super().__init__(get_batch_method, num_steps, **get_batch_kwargs)
+        self.importance_hyperparameter = importance_hyperparameter
+        self.importance_hyperparameter_options = importance_hyperparameter_options
+    
+    def __iter__(self):
+        assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
+        self.epoch_count += 1
+
+        if self.grad_magnitues_and_infos:
+            grad_mags, hyperparameter_option_index = self.grad_magnitues_and_infos
+            grad_mag_per_option = torch.zeros(len(self.importance_hyperparameter_options))
+            recorded_magnitudes = torch.scatter_reduce(grad_mag_per_option, 0, torch.tensor(hyperparameter_option_index), torch.tensor(grad_mags), reduce='mean')
+            probs = recorded_magnitudes / recorded_magnitudes.sum()
+        else:
+            probs = torch.ones(len(self.importance_hyperparameter_options))
+        
+        scales = 1 / (probs * len(probs))
+
+        self.last_probs = probs
+        get_batch_kwargs = deepcopy(self.get_batch_kwargs)
+        hyperparameters_for_all_batches = []
+        multipliers = []
+        for step in range(self.num_steps):
+            hp_index = torch.multinomial(probs, 1).item() # todo check this correct
+            hp_value = self.importance_hyperparameter_options[hp_index]
+            hyperparameters_for_all_batches.append({**get_batch_kwargs['hyperparameters'], self.importance_hyperparameter: hp_value})
+            multipliers.append(scales[hp_index])
+
+        for hps, m in zip(hyperparameters_for_all_batches, multipliers):
+            b = self.gbm(**{**self.get_batch_kwargs, 'hyperparameters': hps}, epoch=self.epoch_count - 1, model=self.model)
+            b.gradient_multipliers = torch.tensor(m)
+            yield b
+
+
+
+
+        
+
+
 
 @torch.no_grad()
 def zero_time_get_batch(batch_size, seq_len, num_features, device='cpu', **kwargs):

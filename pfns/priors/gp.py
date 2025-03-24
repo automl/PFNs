@@ -6,7 +6,6 @@ from torch import nn
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, DotProduct, WhiteKernel
 from .prior import Batch
-from .utils import get_batch_to_dataloader
 
 
 length_scale_sampling_gp = .6
@@ -35,7 +34,6 @@ def get_batch(batch_size, seq_len, num_features, noisy_std=None, **kwargs):
     return Batch(x=x, y=y, target_y=y)
 
 
-DataLoader = get_batch_to_dataloader(get_batch)
 
 def evaluate(x, y, y_non_noisy, use_mse=False, length_scale=length_scale_sampling_gp):
     start_time = time.time()

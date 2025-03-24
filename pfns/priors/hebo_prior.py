@@ -15,7 +15,6 @@ from gpytorch.constraints import GreaterThan
 from . import utils
 from ..utils import default_device, to_tensor
 from .prior import Batch
-from .utils import get_batch_to_dataloader
 
 class Warp(gpytorch.Module):
     r"""A transform that uses learned input warping functions.
@@ -513,4 +512,3 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
         assert x.shape[:2] == sample.shape[:2]
     return Batch(x=x.float(), y=sample, target_y=sample if hyperparameters.get('observation_noise', True) else sample_wo_noise)
 
-DataLoader = get_batch_to_dataloader(get_batch)

@@ -27,6 +27,8 @@ class Batch:
     single_eval_pos: Optional[torch.Tensor] = None
     causal_model_dag: Optional[object] = None
     mean_prediction: Optional[bool] = None  # this controls whether to do mean prediction in bar_distribution for nonmyopic BO
+    info_used_with_gradient_magnitudes: Optional[dict] = None
+    gradient_multipliers: Optional[torch.Tensor] = None
 
     def other_filled_attributes(self, set_of_attributes: Set[str] = frozenset(('x', 'y', 'target_y'))):
         return [f.name for f in fields(self)

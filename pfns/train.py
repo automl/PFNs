@@ -11,6 +11,7 @@ import typing as tp
 import torch
 from torch import nn
 from torch.amp import autocast, GradScaler
+import einops
 
 from . import utils
 from .priors import prior
@@ -39,33 +40,32 @@ class TrainingResult(tp.NamedTuple):
     data_loader: tp.Optional[torch.utils.data.DataLoader]
 
 
-def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, criterion, encoder_generator, emsize=200, nhid=200, nlayers=6, nhead=2, dropout=0.0,
+def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder_generator, emsize=200, nhid=200, nlayers=6, nhead=2, dropout=0.0,
           epochs=10, steps_per_epoch=100, batch_size=200, seq_len=10, lr=None, weight_decay=0.0, warmup_epochs=10, input_normalization=False,
           y_encoder_generator=None, pos_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
           aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
           initializer=None, initialize_with_model=None, train_mixed_precision=True, efficient_eval_masking=True, border_decoder=None
-          , num_global_att_tokens=0, progress_bar=False, **model_extra_args):
+          , num_global_att_tokens=0, progress_bar=False, n_targets_per_input=1, dataloader_class=priors.utils.StandardDataLoader, **model_extra_args):
     device: str = gpu_device if torch.cuda.is_available() else 'cpu:0'
     print(f'Using {device} device')
     using_dist, rank, device = init_dist(device)
     single_eval_pos_gen = single_eval_pos_gen if callable(single_eval_pos_gen) else lambda: single_eval_pos_gen
 
-    if inspect.isclass(priordataloader_class_or_get_batch) and issubclass(priordataloader_class_or_get_batch, prior.PriorDataLoader):
-        priordataloader_class = priordataloader_class_or_get_batch
-    else:
-        priordataloader_class = priors.utils.get_batch_to_dataloader(priordataloader_class_or_get_batch)
-        
 
     def eval_pos_seq_len_sampler():
         single_eval_pos = single_eval_pos_gen()
         return single_eval_pos, seq_len
-    dl = priordataloader_class(num_steps=steps_per_epoch,
-                               batch_size=batch_size,
-                               eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
-                               seq_len_maximum=seq_len,
-                               device=device,
-                               **extra_prior_kwargs_dict)
+
+    dl = dataloader_class(
+        get_batch_method=get_batch_method,
+        num_steps=steps_per_epoch,
+        batch_size=batch_size,
+        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
+        seq_len_maximum=seq_len,
+        device=device,
+        **extra_prior_kwargs_dict
+    )
 
     test_batch: prior.Batch = dl.get_test_batch()
     style_def = test_batch.style
@@ -158,10 +158,11 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
         before_get_batch = time.time()
         assert len(dl) % aggregate_k_gradients == 0, 'Please set the number of steps per epoch s.t. `aggregate_k_gradients` divides it.'
         tqdm_iter = tqdm(range(len(dl)), desc='Training Epoch') if rank==0 and progress_bar else None # , disable=not verbose
+        grad_magnitudes_and_infos = []
 
         for batch, full_data in enumerate(dl):
             data = (full_data.style.to(device) if full_data.style is not None else None, full_data.x.to(device), full_data.y.to(device))
-            targets = full_data.target_y.to(device)
+            targets = full_data.target_y.to(device) # shape: seq_len, batch_size, n_targets_per_input
             single_eval_pos = full_data.single_eval_pos
 
             def get_metrics():
@@ -195,12 +196,15 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                         if single_eval_pos is not None:
                             targets = targets[single_eval_pos:]
 
-                        if len(targets.shape) == len(output.shape):
-                            # this implies the prior uses a trailing 1 dimesnion
-                            # below we assume this not to be the case
-                            targets = targets.squeeze(-1)
+                        # Repeat output in the semi-last dimension n_targets_per_input times
+                        output = output.unsqueeze(2).expand(*output.shape[:2], n_targets_per_input, output.shape[-1])
+
                         assert targets.shape == output.shape[:-1], f"Target shape {targets.shape} " \
-                                                                   "does not match output shape {output.shape}"
+                                                                   f"does not match output shape {output.shape}"
+                        
+                        output = einops.rearrange(output, 's b t l -> s (b t) l')
+                        targets = einops.rearrange(targets, 's b l -> s (b l)')
+
                         if isinstance(criterion, nn.GaussianNLLLoss):
                             assert output.shape[-1] == 2, \
                                 'need to write a little bit of code to handle multiple regression targets at once'
@@ -233,9 +237,10 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                             losses = criterion(output, targets, mean_prediction_logits=output_once['mean_prediction'])
                             # the mean pred loss appears as the last per sequence
                         else:
-                            losses = criterion(output, targets)
-                        losses = losses.view(-1, output.shape[1]) # sometimes the seq length can be one off
+                            losses = criterion(output, targets.unsqueeze(-1))
+                        losses = einops.rearrange(losses, 's (b t) -> s b t', t=n_targets_per_input) # sometimes the seq length can be one off
                                                                   # that is because bar dist appends the mean
+                        losses = losses.mean(2)  # average over the n_targets_per_input
                         loss, nan_share = utils.torch_nanmean(losses.mean(0), return_nanshare=True)
                         loss_scaled = loss / aggregate_k_gradients
 
@@ -244,7 +249,17 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
 
                     if batch % aggregate_k_gradients == aggregate_k_gradients - 1:
                         if scaler: scaler.unscale_(optimizer)
+                        # todo disable grad magnitude tracking with aggregate k
+                        grad_magnitudes_and_infos.append((sum([(w.grad**2).sum() for w in model.parameters() if w.grad]).sqrt().cpu().item(), batch.info_used_with_gradient_magnitudes))
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
+
+                        if batch.gradient_multipliers is not None:
+                            assert aggregate_k_gradients == 1, "Scaling grads is only supported if you don't do grad acc."
+                            assert all(batch.gradient_multipliers.view(-1)[0] == batch.gradient_multipliers.view(-1)[i] for i in range(batch.gradient_multipliers.numel())), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
+                            with torch.no_grad():
+                                for w in model.parameters():
+                                    w.grad = w.grad * batch.gradient_multipliers.view(-1)[0]
+
                         if scaler:
                             scaler.step(optimizer)
                             scaler.update()
@@ -268,6 +283,11 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                             step_callback(metrics_to_log)
                         nan_steps += nan_share
                         ignore_steps += (targets == -100).float().mean()
+                    else:
+                        print("Invalid step encountered, skipping...")
+                        nan_position = torch.isnan(losses) # (seq_len, batch_size)
+                        print(output[nan_position], targets[nan_position])
+
                 except Exception as e:
                     print("Invalid step encountered, skipping...")
                     print(e)
@@ -278,10 +298,11 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                 tqdm_iter.set_postfix({'data_time': time_to_get_batch, 'step_time': step_time, 'mean_loss': total_loss / (batch+1)})
 
             before_get_batch = time.time()
-        return get_metrics()
+        return get_metrics(), grad_magnitudes_and_infos
 
     total_loss = float('inf')
     total_positional_losses = float('inf')
+    grad_magnitues_and_infos = None
     try:
         # Initially test the epoch callback function
         if epoch_callback is not None and rank == 0:
@@ -289,8 +310,9 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
         for epoch in (range(1, epochs + 1) if epochs is not None else itertools.count(1)):
             epoch_start_time = time.time()
             try:
-                total_loss, total_positional_losses, time_to_get_batch, forward_time, step_time, nan_share, ignore_share =\
+                (total_loss, total_positional_losses, time_to_get_batch, forward_time, step_time, nan_share, ignore_share), grad_magnitues_and_infos =\
                     train_epoch()
+                dl.grad_magnitues_and_infos = grad_magnitues_and_infos
             except Exception as e:
                 print("Invalid epoch encountered, skipping...")
                 print(e)

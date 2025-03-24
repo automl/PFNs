@@ -10,6 +10,7 @@ import botorch
 from gpytorch.priors.torch_priors import GammaPrior, UniformPrior, LogNormalPrior
 from gpytorch.means import ZeroMean
 from botorch.models.transforms.input import *
+from botorch.exceptions import InputDataWarning
 from gpytorch.constraints import GreaterThan
 
 from . import utils
@@ -352,7 +353,11 @@ def get_model(x, y, hyperparameters: dict, sample=True):
     # assume mean 0 always!
     if len(y.shape) < len(x.shape):
         y = y.unsqueeze(-1)
-    model = botorch.models.SingleTaskGP(x, y, likelihood=likelihood, covar_module=covar_module, input_transform=warp_tf)
+
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=InputDataWarning)
+        model = botorch.models.SingleTaskGP(x, y, likelihood=likelihood, covar_module=covar_module, input_transform=warp_tf)
     model.mean_module = ZeroMean(x.shape[:-2])
     model.to(device)
     likelihood.to(device)
@@ -400,6 +405,7 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
     :param for_regression:
     :return:
     '''
+    device = 'cpu'
     hyperparameters = hyperparameters or {}
     with gpytorch.settings.fast_computations(*hyperparameters.get('fast_computations',(True,True,True))):
         batch_size_per_gp_sample = (batch_size_per_gp_sample or max(batch_size // 4,1))
@@ -426,7 +432,7 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
                 used_local_x = local_x[...,~unused_feature_mask]
             else:
                 used_local_x = local_x
-            get_model_and_likelihood = lambda: get_model(used_local_x, torch.zeros(num_candidates,x.shape[1], device=device), hyperparameters)
+            get_model_and_likelihood = lambda: get_model(used_local_x, torch.randn(num_candidates,x.shape[1], device=device), hyperparameters)
             model, likelihood = get_model_and_likelihood()
             if verbose: print(list(model.named_parameters()),
                               (list(model.input_transform.named_parameters()), model.input_transform.concentration1, model.input_transform.concentration0)
@@ -480,13 +486,13 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
             print('throwaway share', throwaway_share/(batch_size//batch_size_per_gp_sample))
 
         #print(f'took {time.time() - start}')
-        sample = torch.cat(samples, 1)[...,None]
-        sample_wo_noise = torch.cat(samples_wo_noise, 1)[...,None]
+        sample = torch.cat(samples, 1)[...,None].float()
+        sample_wo_noise = torch.cat(samples_wo_noise, 1)[...,None].float()
         x = x.view(-1,batch_size,seq_len,num_features)[0]
         # TODO think about enabling the line below
         #sample = sample - sample[0, :].unsqueeze(0).expand(*sample.shape)
         x = x.transpose(0,1)
         assert x.shape[:2] == sample.shape[:2]
-    return Batch(x=x, y=sample, target_y=sample if hyperparameters.get('observation_noise', True) else sample_wo_noise)
+    return Batch(x=x.float(), y=sample, target_y=sample if hyperparameters.get('observation_noise', True) else sample_wo_noise)
 
 DataLoader = get_batch_to_dataloader(get_batch)

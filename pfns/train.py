@@ -10,7 +10,7 @@ import typing as tp
 
 import torch
 from torch import nn
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 
 from . import utils
 from .priors import prior
@@ -46,7 +46,7 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
           aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
           initializer=None, initialize_with_model=None, train_mixed_precision=True, efficient_eval_masking=True, border_decoder=None
           , num_global_att_tokens=0, progress_bar=False, **model_extra_args):
-    device = gpu_device if torch.cuda.is_available() else 'cpu:0'
+    device: str = gpu_device if torch.cuda.is_available() else 'cpu:0'
     print(f'Using {device} device')
     using_dist, rank, device = init_dist(device)
     single_eval_pos_gen = single_eval_pos_gen if callable(single_eval_pos_gen) else lambda: single_eval_pos_gen
@@ -180,7 +180,7 @@ def train(priordataloader_class_or_get_batch: prior.PriorDataLoader | callable, 
                 before_forward = time.time()
                 try:
                     metrics_to_log = {}
-                    with autocast(enabled=scaler is not None):
+                    with autocast(device.split(':')[0], enabled=scaler is not None):
                         # If style is set to None, it should not be transferred to device
                         out = model(tuple(e.to(device) if torch.is_tensor(e) else e for e in data),
                                     single_eval_pos=single_eval_pos, only_return_standard_out=False)

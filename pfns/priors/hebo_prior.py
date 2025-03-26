@@ -1,4 +1,3 @@
-import random
 import warnings
 
 from typing import List, Optional, Union
@@ -325,7 +324,7 @@ def get_model(x, y, hyperparameters: dict, sample=True):
     covar_module = gpytorch.kernels.ScaleKernel(covar_module, outputscale_prior=outputscale_prior,
                                                 outputscale_constraint=constraint_based_on_distribution_support(outputscale_prior, device, sample_from_path))
 
-    if random.random() < float(hyperparameters.get('add_linear_kernel', True)):
+    if torch.rand(1).item() < float(hyperparameters.get('add_linear_kernel', True)):
         # ORIG DIFF: added priors for variance and outputscale of linear kernel
         var_prior = UniformPrior(torch.tensor(0.0, device=device), torch.tensor(1.0, device=device))
         out_prior = UniformPrior(torch.tensor(0.0, device=device), torch.tensor(1.0, device=device))
@@ -419,7 +418,26 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
             assert not unused_feature_likelihood
             x = torch.linspace(0,1.,seq_len).unsqueeze(0).repeat(total_num_candidates,1).unsqueeze(-1)
         else:
-            x = torch.rand(total_num_candidates, seq_len, num_features, device=device)
+            if hyperparameters['x_sampler'] == 'uni':
+                x = torch.rand(total_num_candidates, seq_len, num_features, device=device)
+            elif hyperparameters['x_sampler'] == 'normal':
+                unnormalized_x = torch.randn(total_num_candidates, seq_len, num_features, device=device)
+                # Normalize each feature across the seq_len dimension to be within [0,1]
+                # Reshape to make operations easier
+                reshaped_x = unnormalized_x.transpose(1, 2)  # [batch, features, seq_len]
+                # Get min and max values for each feature in each batch
+                min_vals, _ = torch.min(reshaped_x, dim=2, keepdim=True)
+                max_vals, _ = torch.max(reshaped_x, dim=2, keepdim=True)
+                # Handle the case where min == max to avoid division by zero
+                denom = max_vals - min_vals
+                denom[denom == 0] = 1.0  # Set denominator to 1 where max == min
+                # Normalize to [0,1]
+                normalized_x = (reshaped_x - min_vals) / denom
+                # Reshape back to original format
+                x = normalized_x.transpose(1, 2)  # [batch, seq_len, features]
+            else:
+                raise NotImplementedError(f"Your x_sampler ({hyperparameters['x_sampler']}) setting is not implemented.")
+
         samples = []
         samples_wo_noise = []
         for i in range(0, total_num_candidates, num_candidates):
@@ -482,7 +500,7 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
                     samples_wo_noise.append(sample_wo_noise.transpose(0, 1))
                     successful_sample = True
 
-        if random.random() < .01:
+        if torch.rand(1).item() < .01:
             print('throwaway share', throwaway_share/(batch_size//batch_size_per_gp_sample))
 
         #print(f'took {time.time() - start}')

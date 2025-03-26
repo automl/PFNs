@@ -57,6 +57,11 @@ def get_batch_to_dataloader(get_batch_method_):
 
     return DL
 
+@torch.no_grad()
+def zero_time_get_batch(batch_size, seq_len, num_features, device='cpu', **kwargs):
+    y = torch.rand(seq_len, batch_size, 1, device=device)
+    return Batch(x=torch.rand(seq_len, batch_size, num_features, device=device), y=y, target_y=y.clone())
+
 
 def plot_features(data, targets, fig=None, categorical=True, plot_diagonal=True):
     import seaborn as sns
@@ -137,7 +142,7 @@ def randomize_classes(x, num_classes):
 @torch.no_grad()
 def sample_num_feaetures_get_batch(batch_size, seq_len, num_features, hyperparameters, get_batch, **kwargs):
     if hyperparameters.get('sample_num_features', True) and kwargs['epoch'] > 0: # don't sample on test batch
-        num_features = random.randint(1, num_features)
+        num_features = torch.randint(1, num_features+1, size=[1]).item()
     return get_batch(batch_size, seq_len, num_features, hyperparameters=hyperparameters, **kwargs)
 
 

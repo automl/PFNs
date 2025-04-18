@@ -177,6 +177,74 @@ class StandardDataLoader(DataLoader):
 
         print('DataLoader.__dict__', self.__dict__)
 
+        if 'device' in self.get_batch_kwargs:
+            self.get_batch_kwargs['device'] = 'cpu'
+
+        # Pass sampler and all kwargs to the dataset
+        super().__init__(
+            dataset=_BatchedIterableDataset(
+                get_batch_method,
+                num_steps,
+                eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
+                **get_batch_kwargs
+            ),
+            batch_size=None, # Batching is handled by the dataset iterator
+            batch_sampler=None,
+            shuffle=False,
+            num_workers=num_workers,
+            worker_init_fn=worker_init_fn, # Use the updated function
+            collate_fn=lambda x: x, # Dataset yields complete batches
+        )
+
+    def __len__(self):
+        return self.num_steps
+
+    def get_test_batch(self, **kwargs): # does not increase epoch_count
+        kwargs = {**self.get_batch_kwargs, **kwargs}
+
+
+        kwargs['single_eval_pos'], kwargs['seq_len'] = self.eval_pos_seq_len_sampler()
+        # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
+        # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
+        if kwargs.get('dynamic_batch_size'):
+            kwargs['batch_size'] = kwargs['batch_size'] * math.floor(
+                math.pow(kwargs['seq_len_maximum'], kwargs['dynamic_batch_size'])
+                / math.pow(kwargs['seq_len'], kwargs['dynamic_batch_size'])
+            )
+        batch: Batch = self.get_batch_method(epoch=self.epoch_count, model=self.model if hasattr(self, 'model') else None, **kwargs)
+        if batch.single_eval_pos is None:
+            batch.single_eval_pos = kwargs['single_eval_pos']
+        return batch
+
+    def __iter__(self):
+        assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
+        self.epoch_count += 1
+        # The iteration logic is now handled by _BatchedIterableDataset passed to super().__init__
+        return super().__iter__()
+
+
+class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
+    def __init__(self, get_batch_method, num_steps, importance_hyperparameter: str, 
+                 importance_hyperparameter_options: list, do_not_adapt:bool=False, 
+                 importance_sampling_based_on_square:bool=False, importance_probs_init:list|None=None,
+                 grad_magnitude_adam_normalized:bool=False,
+                 importance_sampling_based_on_loss_improvement:bool=False,
+                 multiplicative_loss_improvement:bool=False,
+                 normalize_loss_improvement_by:str|None=None,
+                  **get_batch_kwargs):
+        # default assumption is that we want to sample them all equally
+        super().__init__(get_batch_method, num_steps, **get_batch_kwargs)
+        self.importance_hyperparameter = importance_hyperparameter
+        self.importance_hyperparameter_options = importance_hyperparameter_options
+        self.importance_sampling_infos = None
+        self.do_not_adapt = do_not_adapt
+        self.importance_sampling_based_on_square = importance_sampling_based_on_square 
+        self.importance_probs_init = importance_probs_init
+        self.importance_sampling_based_on_loss_improvement = importance_sampling_based_on_loss_improvement
+        self.multiplicative_loss_improvement = multiplicative_loss_improvement
+        self.normalize_loss_improvement_by = normalize_loss_improvement_by
+        self.grad_magnitude_adam_normalized = grad_magnitude_adam_normalized
+    
     def gbm(self, *args, eval_pos_seq_len_sampler, **kwargs):
         kwargs['single_eval_pos'], kwargs['seq_len'] = eval_pos_seq_len_sampler()
         # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
@@ -191,6 +259,158 @@ class StandardDataLoader(DataLoader):
             batch.single_eval_pos = kwargs['single_eval_pos']
         return batch
 
+    def __iter__(self):
+        assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
+        if self.epoch_count > 0:
+            # did an iter before
+            assert self.importance_sampling_infos is not None 
+        self.epoch_count += 1
+
+        if (self.importance_sampling_infos is not None) and not self.do_not_adapt:
+            if self.importance_sampling_based_on_loss_improvement:
+                # Group losses by hyperparameter option and by epoch
+                
+                # Calculate current epoch's average loss per option
+                current_epoch_losses = {}
+                for _, option_idx, loss, *_ in self.importance_sampling_infos:
+                    assert 0 <= option_idx < len(self.importance_hyperparameter_options), f"Option index {option_idx} is out of bounds for hyperparameter options {self.importance_hyperparameter_options}"
+                    if option_idx not in current_epoch_losses:
+                        current_epoch_losses[option_idx] = []
+                    current_epoch_losses[option_idx].append(loss)
+
+                current_epoch_option_counts = torch.zeros(len(self.importance_hyperparameter_options))
+                
+                # Average the losses for each option in the current epoch
+                for option_idx in current_epoch_losses:
+                    current_epoch_option_counts[option_idx] = len(current_epoch_losses[option_idx])
+                    current_epoch_losses[option_idx] = torch.tensor(current_epoch_losses[option_idx]).mean().item()
+
+                if not hasattr(self, 'previous_epoch_losses'):
+                    probs = torch.ones(len(self.importance_hyperparameter_options))/len(self.importance_hyperparameter_options)
+                else:
+                    print('current_epoch_losses', current_epoch_losses)
+                    
+                    # Calculate improvements compared to previous epoch
+                    improvements = torch.zeros(len(self.importance_hyperparameter_options))
+                    for option_idx, current_loss in current_epoch_losses.items():
+                        if option_idx in self.previous_epoch_losses:
+                            if self.multiplicative_loss_improvement:
+                                # Calculate geometric mean of improvement per step
+                                improvements[option_idx] = current_loss / self.previous_epoch_losses[option_idx]
+                            else:
+                                # Original additive improvement
+                                improvements[option_idx] = self.previous_epoch_losses[option_idx] - current_loss
+
+                    print('improvements', improvements)
+
+                    if self.normalize_loss_improvement_by == 'count':
+                        total_counts = (self.previous_epoch_counts + current_epoch_option_counts) / 2
+                        if self.multiplicative_loss_improvement:
+                            improvement_ratios = improvements ** (1.0 / total_counts)
+
+                            expected_losses = torch.tensor([[improvement_ratios[i]**steps * current_epoch_losses[i] for steps in range(self.num_steps + 1)] for i in range(len(self.importance_hyperparameter_options))])
+
+                            config = torch.zeros(len(self.importance_hyperparameter_options), dtype=torch.int64)
+                            print('expected_losses', expected_losses)
+                            for step in range(self.num_steps):
+                                current_losses = expected_losses[torch.arange(len(config)), config]
+                                possible_improvements = current_losses - expected_losses[torch.arange(len(config)), config + 1]
+                                best_option_idx = torch.argmax(possible_improvements)
+                                config[best_option_idx] += 1
+
+                            print('config', config)
+                            
+                            probs = config / config.sum()
+                            probs = probs * 0.8 + torch.ones(len(probs))/len(probs) * 0.2
+                            
+                        else:
+                            # Use combined counts from both epochs for normalization
+                            # Avoid division by zero by setting improvements to 0 where count is 0
+                            mask = total_counts > 0
+                            improvements[mask] = improvements[mask] / torch.sqrt(total_counts[mask])
+                            improvements[~mask] = 0.0
+                            print('normalized improvements', improvements)
+                            
+                            
+                            # Ensure all improvements are positive by shifting
+                            improvements = improvements - improvements.min() + 1e-8
+                            
+                            probs = improvements / improvements.sum()
+
+                            # make sure that the smallest prob is at least 1/len(options)/10
+                            probs = probs * 0.9 + torch.ones(len(probs))/len(probs) * 0.1
+                    else:
+                        assert self.normalize_loss_improvement_by is None, f"Invalid normalization method: {self.normalize_loss_improvement_by}"
+
+                # Store current losses and update counts for next epoch comparison
+                self.previous_epoch_losses = current_epoch_losses
+                self.previous_epoch_counts = current_epoch_option_counts
+            else:
+                # Original gradient-based importance sampling
+                if self.grad_magnitude_adam_normalized:
+                    grad_mags = torch.tensor([nm for m,i,_,nm in self.importance_sampling_infos])
+                else:
+                    grad_mags = torch.tensor([m for m,i,*_ in self.importance_sampling_infos])
+                if not self.importance_sampling_based_on_square:
+                    grad_mags = grad_mags.sqrt()
+                hyperparameter_option_index = torch.tensor([i for m,i,*_ in self.importance_sampling_infos])
+                grad_mag_per_option = torch.zeros(len(self.importance_hyperparameter_options))
+                recorded_magnitudes = torch.scatter_reduce(grad_mag_per_option, 0, hyperparameter_option_index[torch.isfinite(grad_mags)], grad_mags[torch.isfinite(grad_mags)], reduce='mean')
+                if self.importance_sampling_based_on_square:
+                    recorded_magnitudes = recorded_magnitudes.sqrt()
+                probs = recorded_magnitudes / recorded_magnitudes.sum()
+        else:
+            print('using uniform dist')
+            if self.importance_probs_init is None:
+                probs = torch.ones(len(self.importance_hyperparameter_options))/len(self.importance_hyperparameter_options)
+            else:
+                probs = torch.tensor(self.importance_probs_init)
+                probs = probs / probs.sum()
+
+        if (probs == 0.).any():
+            probs[probs == 0.] = probs[probs > 0.].min()
+            probs = probs / probs.sum()
+
+        print('importance sampling probs', probs)
+        
+        scales = 1 / (probs * len(probs))
+
+        self.last_probs = probs
+        get_batch_kwargs = deepcopy(self.get_batch_kwargs)
+
+        # Need the sampler for the gbm call below
+        sampler = get_batch_kwargs.get('eval_pos_seq_len_sampler')
+        if sampler is None:
+             seq_len = get_batch_kwargs.get('seq_len')
+             if seq_len is None:
+                 raise ValueError("seq_len must be provided in get_batch_kwargs for DiscreteImportanceSamplingDataLoader if eval_pos_seq_len_sampler is not.")
+             sampler = lambda: (get_uniform_single_eval_pos_sampler(seq_len - 1)(), seq_len)
+
+
+        hp_indices = []
+        hyperparameters_for_all_batches = []
+        multipliers = []
+        for step in range(self.num_steps):
+            hp_index = torch.multinomial(probs, 1).item() # todo check this correct
+            hp_indices.append(hp_index)
+            hp_value = self.importance_hyperparameter_options[hp_index]
+            # Ensure 'hyperparameters' exists in get_batch_kwargs before trying to merge
+            base_hps = get_batch_kwargs.get('hyperparameters', {})
+            hyperparameters_for_all_batches.append({**base_hps, self.importance_hyperparameter: hp_value})
+            multipliers.append(scales[hp_index])
+
+        for hp_index, hps, m in zip(hp_indices, hyperparameters_for_all_batches, multipliers):
+            # This call uses self.gbm, which still does its own sampling via the sampler
+            b = self.gbm(
+                eval_pos_seq_len_sampler=sampler, # Pass the sampler to gbm
+                **{**self.get_batch_kwargs, 'hyperparameters': hps},
+                epoch=self.epoch_count - 1,
+                model=self.model
+            )
+            b.gradient_multipliers = m
+            b.info_used_with_gradient_magnitudes = hp_index
+            yield b
+    
     def __len__(self):
         return self.num_steps
 
@@ -201,49 +421,6 @@ class StandardDataLoader(DataLoader):
         assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
         self.epoch_count += 1
         return iter(self.gbm(**self.get_batch_kwargs, epoch=self.epoch_count - 1, model=self.model) for _ in range(self.num_steps))
-
-
-class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
-    def __init__(self, get_batch_method, num_steps, importance_hyperparameter: str, importance_hyperparameter_options: list, **get_batch_kwargs):
-        # default assumption is that we want to sample them all equally
-        super().__init__(get_batch_method, num_steps, **get_batch_kwargs)
-        self.importance_hyperparameter = importance_hyperparameter
-        self.importance_hyperparameter_options = importance_hyperparameter_options
-    
-    def __iter__(self):
-        assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
-        self.epoch_count += 1
-
-        if self.grad_magnitues_and_infos:
-            grad_mags, hyperparameter_option_index = self.grad_magnitues_and_infos
-            grad_mag_per_option = torch.zeros(len(self.importance_hyperparameter_options))
-            recorded_magnitudes = torch.scatter_reduce(grad_mag_per_option, 0, torch.tensor(hyperparameter_option_index), torch.tensor(grad_mags), reduce='mean')
-            probs = recorded_magnitudes / recorded_magnitudes.sum()
-        else:
-            probs = torch.ones(len(self.importance_hyperparameter_options))
-        
-        scales = 1 / (probs * len(probs))
-
-        self.last_probs = probs
-        get_batch_kwargs = deepcopy(self.get_batch_kwargs)
-        hyperparameters_for_all_batches = []
-        multipliers = []
-        for step in range(self.num_steps):
-            hp_index = torch.multinomial(probs, 1).item() # todo check this correct
-            hp_value = self.importance_hyperparameter_options[hp_index]
-            hyperparameters_for_all_batches.append({**get_batch_kwargs['hyperparameters'], self.importance_hyperparameter: hp_value})
-            multipliers.append(scales[hp_index])
-
-        for hps, m in zip(hyperparameters_for_all_batches, multipliers):
-            b = self.gbm(**{**self.get_batch_kwargs, 'hyperparameters': hps}, epoch=self.epoch_count - 1, model=self.model)
-            b.gradient_multipliers = torch.tensor(m)
-            yield b
-
-
-
-
-        
-
 
 
 @torch.no_grad()

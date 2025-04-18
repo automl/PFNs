@@ -46,7 +46,9 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
           aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
           initializer=None, initialize_with_model=None, train_mixed_precision=True, efficient_eval_masking=True, border_decoder=None
-          , num_global_att_tokens=0, progress_bar=False, n_targets_per_input=1, dataloader_class=priors.utils.StandardDataLoader, **model_extra_args):
+          , num_global_att_tokens=0, progress_bar=False, n_targets_per_input=1,  dataloader_class=priors.utils.StandardDataLoader, num_workers=None, **model_extra_args):
+
+    total_start_time = time.time()
     device: str = gpu_device if torch.cuda.is_available() else 'cpu:0'
     print(f'Using {device} device')
     using_dist, rank, device = init_dist(device)
@@ -56,6 +58,9 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
     def eval_pos_seq_len_sampler():
         single_eval_pos = single_eval_pos_gen()
         return single_eval_pos, seq_len
+
+    if num_workers is not None:
+        extra_prior_kwargs_dict['num_workers'] = num_workers
 
     dl = dataloader_class(
         get_batch_method=get_batch_method,

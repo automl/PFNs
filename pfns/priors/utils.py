@@ -4,27 +4,177 @@ import inspect
 import random
 from functools import partial
 from copy import deepcopy
+from typing import Callable, Iterator, TypeAlias
+from typing_extensions import override
 
 import torch
-
+from torch import nn
+from torch.utils.data import DataLoader, IterableDataset
+import torch.distributed as dist
 from ..utils import set_locals_in_self, normalize_data
 from .prior import PriorDataLoader, Batch
-from torch import nn
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import scipy.stats as stats
 import math
+import torch.utils.data # Added for get_worker_info
+import os
 
-class StandardDataLoader(PriorDataLoader):
+from ..utils import (
+    set_locals_in_self,
+    normalize_data,
+    get_uniform_single_eval_pos_sampler,
+)
+from .prior import PriorDataLoader, Batch
+
+
+# Moved this function outside the class
+def compute_eval_pos_sequence(num_steps, eval_pos_seq_len_sampler, batch_size=None, seq_len_maximum=None, dynamic_batch_size=None):
+    """Pre-computes single_eval_pos, seq_len and adjusted batch_size for all steps in the dataloader.
+
+    Args:
+        num_steps: Total number of steps (batches) in the epoch.
+        eval_pos_seq_len_sampler: Callable that returns (single_eval_pos, seq_len) tuples
+        batch_size: Base batch size before dynamic adjustment
+        seq_len_maximum: Maximum sequence length for dynamic batch size scaling
+        dynamic_batch_size: Power factor for dynamic batch size scaling
+
+    Returns:
+        List of (single_eval_pos, seq_len, adjusted_batch_size) tuples for each step
+    """
+    eval_pos_sequence = []
+    for _ in range(num_steps):
+        single_eval_pos, seq_len = eval_pos_seq_len_sampler()
+
+        # Calculate dynamic batch size if parameters are provided
+        adjusted_batch_size = batch_size
+        # Check specifically if dynamic_batch_size is provided and non-zero/non-None
+        if dynamic_batch_size and all(x is not None for x in [batch_size, seq_len_maximum]):
+            adjusted_batch_size = batch_size * math.floor(
+                math.pow(seq_len_maximum, dynamic_batch_size)
+                / math.pow(seq_len, dynamic_batch_size)
+            )
+
+        eval_pos_sequence.append((single_eval_pos, seq_len, adjusted_batch_size))
+
+    return eval_pos_sequence
+
+
+class _BatchedIterableDataset(IterableDataset[Batch]):
+    def __init__(
+        self,
+        get_batch_method: Callable[[], Batch],
+        num_steps: int,
+        # Add sampler and dynamic batch size params needed for sequence computation
+        eval_pos_seq_len_sampler: Callable,
+        **get_batch_kwargs,
+    ) -> None:
+        super().__init__()
+        self.get_batch_method = get_batch_method
+        self.num_steps = num_steps
+        self.eval_pos_seq_len_sampler = eval_pos_seq_len_sampler
+        self.kwargs = get_batch_kwargs
+
+    @override
+    def __iter__(self) -> Iterator[Batch]:
+        # Compute the sequence once per iterator creation (i.e., per worker)
+        # Extract necessary parameters from stored kwargs for clarity
+        batch_size = self.kwargs.get('batch_size')
+        seq_len_maximum = self.kwargs.get('seq_len_maximum')
+        dynamic_batch_size = self.kwargs.get('dynamic_batch_size')
+
+        eval_pos_sequence = compute_eval_pos_sequence(
+            self.num_steps,
+            self.eval_pos_seq_len_sampler,
+            batch_size,
+            seq_len_maximum,
+            dynamic_batch_size
+        )
+
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:  # single-process data loading, return the full iterator
+            iter_start = 0
+            iter_end = self.num_steps
+        else:  # multiple workers, split the work
+            per_worker = int(math.ceil(self.num_steps / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, self.num_steps)
+
+        for i in range(iter_start, iter_end):
+            single_eval_pos, seq_len, adjusted_batch_size = eval_pos_sequence[i]
+
+            # Prepare kwargs for the actual batch fetching method
+            kwargs = dict(self.kwargs)
+            kwargs["single_eval_pos"] = single_eval_pos
+            kwargs["seq_len"] = seq_len
+            # Use the pre-calculated adjusted_batch_size
+            kwargs["batch_size"] = adjusted_batch_size
+            # Remove sampler from kwargs passed to get_batch_method if it's not expected
+            kwargs.pop('eval_pos_seq_len_sampler', None)
+            kwargs.pop('dynamic_batch_size', None) # Also remove dynamic_batch_size if not expected
+            kwargs.pop('seq_len_maximum', None) # Remove seq_len_maximum if not expected
+
+
+            b = self.get_batch_method(**kwargs)
+            # Ensure single_eval_pos is set on the batch object if get_batch_method doesn't handle it
+            if b.single_eval_pos is None:
+                 b.single_eval_pos = single_eval_pos
+            yield b
+
+def worker_init_fn(worker_id):
+    # 1. Set PyTorch threads
+    torch.set_num_threads(1)
+
+    # 2. Set environment variables for underlying libraries (NumPy, MKL, OpenMP)
+    #    Often, torch.set_num_threads(1) might handle this, but setting explicitly is safer.
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    # You might need others depending on your NumPy/SciPy build:
+    # os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    # os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    # os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+    # 3. Original seeding logic
+    print(f'worker_init_fn: worker={worker_id}, pid={os.getpid()}, torch_threads={torch.get_num_threads()}') # Added pid and thread check
+    worker_seed = worker_id
+
+    if dist.is_initialized():
+        rank = dist.get_rank()
+    else:
+        rank = 0
+
+    seed = worker_seed + rank * 1000
+
+    torch.manual_seed(seed)
+    # No need to seed cuda in worker_init_fn if data loading is CPU-only
+    # torch.cuda.manual_seed(seed)
+    # torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed) # Also seed Python's random module if used
+
+class StandardDataLoader(DataLoader):
     # Caution, you might need to set self.num_features manually if it is not part of the args.
-    def __init__(self, get_batch_method, num_steps, **get_batch_kwargs):
+    def __init__(self, get_batch_method, num_steps, num_workers=4, eval_pos_seq_len_sampler=None, **get_batch_kwargs):
         set_locals_in_self(locals())
 
         # The stuff outside the or is set as class attribute before instantiation.
         self.num_features = get_batch_kwargs.get('num_features') or self.num_features
         self.epoch_count = 0
-        self.grad_magnitues_and_infos = None
+        self.importance_sampling_infos = None
+
+        # Extract sampler for _BatchedIterableDataset init
+        if eval_pos_seq_len_sampler is None:
+            # Default sampler if not provided in kwargs (matches old _BatchedIterableDataset logic)
+            # Requires seq_len to be in get_batch_kwargs if used.
+            seq_len = get_batch_kwargs.get('seq_len')
+            if seq_len is None:
+                raise ValueError("seq_len must be provided in get_batch_kwargs if eval_pos_seq_len_sampler is not.")
+            eval_pos_seq_len_sampler = lambda: (get_uniform_single_eval_pos_sampler(seq_len - 1)(), seq_len)
+
+        self.eval_pos_seq_len_sampler = eval_pos_seq_len_sampler
+
         print('DataLoader.__dict__', self.__dict__)
 
     def gbm(self, *args, eval_pos_seq_len_sampler, **kwargs):
@@ -180,7 +330,7 @@ def randomize_classes(x, num_classes):
 
 @torch.no_grad()
 def sample_num_feaetures_get_batch(batch_size, seq_len, num_features, hyperparameters, get_batch, **kwargs):
-    if hyperparameters.get('sample_num_features', True) and kwargs['epoch'] > 0: # don't sample on test batch
+    if hyperparameters.get('sample_num_features', True) and kwargs.get('epoch',1) > 0: # don't sample on test batch
         num_features = torch.randint(1, num_features+1, size=[1]).item()
     return get_batch(batch_size, seq_len, num_features, hyperparameters=hyperparameters, **kwargs)
 

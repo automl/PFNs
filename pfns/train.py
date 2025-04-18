@@ -3,11 +3,10 @@ from __future__ import annotations
 import itertools
 import time
 import yaml
-import inspect
 from contextlib import nullcontext
 from tqdm import tqdm
 import typing as tp
-
+import os
 import torch
 from torch import nn
 from torch.amp import autocast, GradScaler
@@ -42,6 +41,7 @@ class TrainingResult(tp.NamedTuple):
 
 def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder_generator, emsize=200, nhid=200, nlayers=6, nhead=2, dropout=0.0,
           epochs=10, steps_per_epoch=100, batch_size=200, seq_len=10, lr=None, weight_decay=0.0, warmup_epochs=10, input_normalization=False,
+          train_state_dict_save_path=None, train_state_dict_load_path=None,
           y_encoder_generator=None, pos_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
           aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
@@ -130,6 +130,32 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         pass
 
     model.to(device)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = scheduler(optimizer, warmup_epochs, epochs if epochs is not None else 100) # when training for fixed time lr schedule takes 100 steps
+
+    start_epoch = 1 # Default start epoch
+
+    # Load checkpoint if provided
+    if train_state_dict_load_path:
+        print(f"Loading checkpoint from {train_state_dict_load_path}")
+        try:
+            checkpoint = torch.load(train_state_dict_load_path, map_location=device)
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                # New format with model, optimizer state and epoch
+                model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                start_epoch = checkpoint['epoch'] + 1
+                print(f"Resuming from epoch {start_epoch}")
+                # Fast-forward the scheduler to the correct epoch
+                for _ in range(start_epoch - 1):
+                    scheduler.step()
+            else:
+                raise ValueError(f"Checkpoint does not contain 'model_state_dict' or 'optimizer_state_dict'. Checkpoint: {checkpoint}")
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            raise e
+
     if using_dist:
         print("Distributed training")
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank],
@@ -139,14 +165,6 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         dl.model = model.module # use local model, should not use multi-gpu functionality..
     else:
         dl.model = model
-
-
-    # learning rate
-    if lr is None:
-        lr = get_openai_lr(model)
-        print(f"Using OpenAI max lr of {lr}.")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = scheduler(optimizer, warmup_epochs, epochs if epochs is not None else 100) # when training for fixed time lr schedule takes 100 steps
 
     scaler = GradScaler() if train_mixed_precision else None
 
@@ -344,7 +362,26 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
             if epoch_callback is not None and rank == 0:
                 epoch_callback(model, epoch, data_loader=dl, scheduler=scheduler)
             scheduler.step()
+
+            # Save model state dict after each epoch if path is provided (on rank 0)
+            if train_state_dict_save_path is not None and rank == 0:
+                save_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+                print(f"Saving checkpoint to {train_state_dict_save_path} (epoch {epoch})")
+                os.makedirs(os.path.dirname(train_state_dict_save_path), exist_ok=True)
+                try:
+                    # Save model state dict, optimizer state dict, and current epoch
+                    checkpoint = {
+                        'model_state_dict': save_model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'epoch': epoch
+                    }
+                    torch.save(checkpoint, train_state_dict_save_path)
+                except Exception as e:
+                    print(f"Error saving checkpoint: {e}")
+
+
     except KeyboardInterrupt:
+        print("Training interrupted by user.")
         pass
 
     if rank == 0: # trivially true for non-parallel training

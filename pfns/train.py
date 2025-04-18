@@ -16,8 +16,9 @@ from . import utils
 from .priors import prior
 from . import priors
 from .transformer import TransformerModel
-from .bar_distribution import BarDistribution, FullSupportBarDistribution, get_bucket_limits, get_custom_bar_dist
-from .utils import get_cosine_schedule_with_warmup, get_openai_lr, StoreDictKeyPair, get_weighted_single_eval_pos_sampler, get_uniform_single_eval_pos_sampler
+from .bar_distribution import BarDistribution, get_custom_bar_dist
+from pfns.model import transformer
+from .utils import get_cosine_schedule_with_warmup, get_openai_lr
 from . import positional_encodings
 from .utils import init_dist
 
@@ -180,8 +181,8 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         ignore_steps = 0
         before_get_batch = time.time()
         assert len(dl) % aggregate_k_gradients == 0, 'Please set the number of steps per epoch s.t. `aggregate_k_gradients` divides it.'
-        tqdm_iter = tqdm(range(len(dl)), desc='Training Epoch') if rank==0 and progress_bar else None # , disable=not verbose
-        grad_magnitudes_and_infos = []
+        tqdm_iter = tqdm(range(len(dl)), desc='Training Epoch') if rank==0 and progress_bar else None
+        importance_sampling_infos = []  # Renamed from squared_grad_magnitudes_and_infos
 
         for batch, full_data in enumerate(dl):
             data = (full_data.style.to(device) if full_data.style is not None else None, full_data.x.to(device), full_data.y.to(device))
@@ -223,10 +224,11 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                         output = output.unsqueeze(2).expand(*output.shape[:2], n_targets_per_input, output.shape[-1])
 
                         assert targets.shape == output.shape[:-1], f"Target shape {targets.shape} " \
-                                                                   f"does not match output shape {output.shape}"
-                        
+                                                                   f"does not match output shape {output.shape}." \
+                                                                   f"This might be because you are missing trailing" \
+                                                                   "1 dimension in the target."
                         output = einops.rearrange(output, 's b t l -> s (b t) l')
-                        targets = einops.rearrange(targets, 's b l -> s (b l)')
+                        targets = einops.rearrange(targets, 's b t -> s (b t)')
 
                         if isinstance(criterion, nn.GaussianNLLLoss):
                             assert output.shape[-1] == 2, \
@@ -272,16 +274,37 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
 
                     if batch % aggregate_k_gradients == aggregate_k_gradients - 1:
                         if scaler: scaler.unscale_(optimizer)
-                        # todo disable grad magnitude tracking with aggregate k
-                        grad_magnitudes_and_infos.append((sum([(w.grad**2).sum() for w in model.parameters() if w.grad]).sqrt().cpu().item(), batch.info_used_with_gradient_magnitudes))
+                        squared_grad_magnitudes = {name: (w.grad**2).sum().cpu().item() for name, w in model.named_parameters() if w.grad is not None}
+                        total_grad_magnitude = sum(squared_grad_magnitudes.values())
+
+                        normalized_squared_grad_magnitudes = {}
+                        # Compute grad magnitude normalized by Adam's beta2 parameter if Adam optimizer is used
+                        if isinstance(optimizer, (torch.optim.Adam, torch.optim.AdamW)):
+                            beta2 = optimizer.param_groups[0]['betas'][1]
+                            # Get the current state of Adam's running average of squared gradients
+                            for name, param in model.named_parameters():
+                                if param.grad is not None:
+                                    state = optimizer.state.get(param, {})
+                                    if 'exp_avg_sq' in state:
+                                        # Normalize the squared gradient by the running average
+                                        normalized_grad_magnitude = ((param.grad**2) / (state['exp_avg_sq'] * (1 - beta2**state.get('step', 1)) + 1e-8)).sum().cpu().item()
+                                        normalized_squared_grad_magnitudes[name] = normalized_grad_magnitude
+                            total_normalized_grad_magnitude = sum(v for k, v in normalized_squared_grad_magnitudes.items())
+                        #print('normalized_squared_grad_magnitudes and squared_grad_magnitudes', {k: (normalized_squared_grad_magnitudes[k]/total_normalized_grad_magnitude, squared_grad_magnitudes[k]/total_grad_magnitude) for k in normalized_squared_grad_magnitudes.keys()})
+                        importance_sampling_infos.append((
+                            total_grad_magnitude,
+                            full_data.info_used_with_gradient_magnitudes,
+                            loss.cpu().item(),
+                            total_normalized_grad_magnitude
+                        ))
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
 
-                        if batch.gradient_multipliers is not None:
+                        if full_data.gradient_multipliers is not None:
                             assert aggregate_k_gradients == 1, "Scaling grads is only supported if you don't do grad acc."
-                            assert all(batch.gradient_multipliers.view(-1)[0] == batch.gradient_multipliers.view(-1)[i] for i in range(batch.gradient_multipliers.numel())), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
+                            assert all(full_data.gradient_multipliers.view(-1)[0] == full_data.gradient_multipliers.view(-1)[i] for i in range(full_data.gradient_multipliers.numel())), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
                             with torch.no_grad():
                                 for w in model.parameters():
-                                    w.grad = w.grad * batch.gradient_multipliers.view(-1)[0]
+                                    w.grad = w.grad * full_data.gradient_multipliers.view(-1)[0]
 
                         if scaler:
                             scaler.step(optimizer)
@@ -309,7 +332,6 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                     else:
                         print("Invalid step encountered, skipping...")
                         nan_position = torch.isnan(losses) # (seq_len, batch_size)
-                        print(output[nan_position], targets[nan_position])
 
                 except Exception as e:
                     print("Invalid step encountered, skipping...")
@@ -321,21 +343,29 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                 tqdm_iter.set_postfix({'data_time': time_to_get_batch, 'step_time': step_time, 'mean_loss': total_loss / (batch+1)})
 
             before_get_batch = time.time()
-        return get_metrics(), grad_magnitudes_and_infos
+        return get_metrics(), importance_sampling_infos
 
     total_loss = float('inf')
     total_positional_losses = float('inf')
-    grad_magnitues_and_infos = None
+    importance_sampling_infos = None  # Renamed from squared_grad_magnitudes_and_infos
     try:
-        # Initially test the epoch callback function
-        if epoch_callback is not None and rank == 0:
-            epoch_callback(model, 1, data_loader=dl, scheduler=scheduler)
-        for epoch in (range(1, epochs + 1) if epochs is not None else itertools.count(1)):
+        # Initially test the epoch callback function only if starting from epoch 1
+        if epoch_callback is not None and rank == 0 and start_epoch == 1:
+            epoch_callback(model, 0, data_loader=dl, scheduler=scheduler) # Call with epoch 0 for initial state
+
+        # Adjust epoch range based on start_epoch
+        epoch_iterator = range(start_epoch, epochs + 1) if epochs is not None else itertools.count(start_epoch)
+
+        for epoch in epoch_iterator:
             epoch_start_time = time.time()
             try:
-                (total_loss, total_positional_losses, time_to_get_batch, forward_time, step_time, nan_share, ignore_share), grad_magnitues_and_infos =\
-                    train_epoch()
-                dl.grad_magnitues_and_infos = grad_magnitues_and_infos
+                # Pass accumulators to train_epoch or handle accumulation here
+                # Modifying train_epoch to accept/return these might be cleaner
+                # For now, let's assume train_epoch returns the epoch's totals
+                (total_loss, total_positional_losses, time_to_get_batch, forward_time, step_time, nan_share, ignore_share), importance_sampling_infos =\
+                    train_epoch() # train_epoch needs to return the calculated positional losses for the epoch
+                dl.importance_sampling_infos = importance_sampling_infos  # Renamed attribute
+
             except Exception as e:
                 print("Invalid epoch encountered, skipping...")
                 print(e)

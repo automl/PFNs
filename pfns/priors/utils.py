@@ -123,7 +123,7 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
                  b.single_eval_pos = single_eval_pos
             yield b
 
-def worker_init_fn(worker_id):
+def worker_init_fn(epoch, worker_id):
     # 1. Set PyTorch threads
     torch.set_num_threads(1)
 
@@ -137,7 +137,6 @@ def worker_init_fn(worker_id):
     # os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
     # 3. Original seeding logic
-    print(f'worker_init_fn: worker={worker_id}, pid={os.getpid()}, torch_threads={torch.get_num_threads()}') # Added pid and thread check
     worker_seed = worker_id
 
     if dist.is_initialized():
@@ -145,7 +144,7 @@ def worker_init_fn(worker_id):
     else:
         rank = 0
 
-    seed = worker_seed + rank * 1000
+    seed = worker_seed + rank * 100 + epoch * 10000
 
     torch.manual_seed(seed)
     # No need to seed cuda in worker_init_fn if data loading is CPU-only
@@ -192,29 +191,12 @@ class StandardDataLoader(DataLoader):
             batch_sampler=None,
             shuffle=False,
             num_workers=num_workers,
-            worker_init_fn=worker_init_fn, # Use the updated function
+            worker_init_fn=lambda worker_id: worker_init_fn(self.epoch_count, worker_id), # Use the updated function
             collate_fn=lambda x: x, # Dataset yields complete batches
         )
 
     def __len__(self):
         return self.num_steps
-
-    def get_test_batch(self, **kwargs): # does not increase epoch_count
-        kwargs = {**self.get_batch_kwargs, **kwargs}
-
-
-        kwargs['single_eval_pos'], kwargs['seq_len'] = self.eval_pos_seq_len_sampler()
-        # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
-        # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
-        if kwargs.get('dynamic_batch_size'):
-            kwargs['batch_size'] = kwargs['batch_size'] * math.floor(
-                math.pow(kwargs['seq_len_maximum'], kwargs['dynamic_batch_size'])
-                / math.pow(kwargs['seq_len'], kwargs['dynamic_batch_size'])
-            )
-        batch: Batch = self.get_batch_method(epoch=self.epoch_count, model=self.model if hasattr(self, 'model') else None, **kwargs)
-        if batch.single_eval_pos is None:
-            batch.single_eval_pos = kwargs['single_eval_pos']
-        return batch
 
     def __iter__(self):
         assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."
@@ -413,9 +395,6 @@ class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
     
     def __len__(self):
         return self.num_steps
-
-    def get_test_batch(self, **kwargs): # does not increase epoch_count
-        return self.gbm(**self.get_batch_kwargs, epoch=self.epoch_count, model=self.model if hasattr(self, 'model') else None, **kwargs)
 
     def __iter__(self):
         assert hasattr(self, 'model'), "Please assign model with `dl.model = ...` before training."

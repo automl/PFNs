@@ -15,11 +15,9 @@ import einops
 from . import utils
 from .priors import prior
 from . import priors
-from .transformer import TransformerModel
-from .bar_distribution import BarDistribution, get_custom_bar_dist
+from pfns.model.bar_distribution import BarDistribution
 from pfns.model import transformer
-from .utils import get_cosine_schedule_with_warmup, get_openai_lr
-from . import positional_encodings
+from .utils import get_cosine_schedule_with_warmup
 from .utils import init_dist
 
 class Losses():
@@ -40,14 +38,14 @@ class TrainingResult(tp.NamedTuple):
     data_loader: tp.Optional[torch.utils.data.DataLoader]
 
 
-def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder_generator, emsize=200, nhid=200, nlayers=6, nhead=2, dropout=0.0,
-          epochs=10, steps_per_epoch=100, batch_size=200, seq_len=10, lr=None, weight_decay=0.0, warmup_epochs=10, input_normalization=False,
+def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder_generator=None, emsize=200, nhid=200, nlayers=6, nhead=2,
+          epochs=10, steps_per_epoch=100, batch_size=200, seq_len=10, lr=None, weight_decay=0.0, warmup_epochs=10,
           train_state_dict_save_path=None, train_state_dict_load_path=None,
-          y_encoder_generator=None, pos_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
+          y_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
-          aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None,
-          initializer=None, initialize_with_model=None, train_mixed_precision=True, efficient_eval_masking=True, border_decoder=None
-          , num_global_att_tokens=0, progress_bar=False, n_targets_per_input=1,  dataloader_class=priors.utils.StandardDataLoader, num_workers=None, **model_extra_args):
+          aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None, features_per_group=-1, train_mixed_precision=True, progress_bar=False, n_targets_per_input=1,
+          dataloader_class=priors.utils.StandardDataLoader, num_workers=None, **model_extra_args
+          ):
 
     total_start_time = time.time()
     device: str = gpu_device if torch.cuda.is_available() else 'cpu:0'
@@ -70,14 +68,10 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
         seq_len_maximum=seq_len,
         device=device,
+        n_targets_per_input=n_targets_per_input,
         **extra_prior_kwargs_dict
     )
 
-    test_batch: prior.Batch = dl.get_test_batch()
-    style_def = test_batch.style
-    print(f'Style definition of first 3 examples: {style_def[:3] if style_def is not None else None}')
-    style_encoder = style_encoder_generator(style_def.shape[1], emsize) if (style_def is not None) else None
-    pos_encoder = (pos_encoder_generator or positional_encodings.NoPositionalEncoding)(emsize, seq_len * 2)
     if isinstance(criterion, nn.GaussianNLLLoss):
         n_out = 2
     elif isinstance(criterion, BarDistribution) or "BarDistribution" in criterion.__class__.__name__: # TODO remove this fix (only for dev)
@@ -87,40 +81,32 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
     else:
         n_out = 1
 
-    #border_decoder = None if border_decoder is None else border_decoder(emsize, criterion.num_bars + 1).to(device)
-
     if continue_model:
         model = continue_model
     else:
         decoder_dict = decoder_dict if decoder_dict else {'standard': (None, n_out)}
 
-        decoder_once_dict = {}
-        if test_batch.mean_prediction is not None:
-            decoder_once_dict['mean_prediction'] = decoder_dict['standard']
-
-        encoder = encoder_generator(dl.num_features, emsize)
-        model = TransformerModel(encoder=encoder
-                                 , nhead=nhead
-                                 , ninp=emsize
-                                 , nhid=nhid
-                                 , nlayers=nlayers
-                                 , dropout=dropout
-                                 , style_encoder=style_encoder
-                                 , y_encoder=y_encoder_generator(1, emsize)
-                                 , input_normalization=input_normalization
-                                 , pos_encoder=pos_encoder
-                                 , decoder_dict=decoder_dict
-                                 , init_method=initializer
-                                 , efficient_eval_masking=efficient_eval_masking
-                                 , decoder_once_dict=decoder_once_dict
-                                 , num_global_att_tokens=num_global_att_tokens
-                                 , **model_extra_args
-                                 )
+        assert features_per_group > 0 or features_per_group == -1, "features_per_group must be > 0 or -1"
+        architectural_features_per_group = dl.num_features if features_per_group == -1 else features_per_group
+        
+        encoder = encoder_generator(architectural_features_per_group, emsize) if encoder_generator else None
+        y_encoder = y_encoder_generator(1, emsize) if y_encoder_generator else None
+        model = transformer.PerFeatureTransformer(
+            encoder=encoder,
+            y_encoder=y_encoder,
+            features_per_group=architectural_features_per_group,
+            decoder_dict=decoder_dict,
+            ninp=emsize,
+            nhid=nhid,
+            nlayers=nlayers,
+            nhead=nhead,
+            attention_between_features=features_per_group != -1,
+            style_encoder=style_encoder_generator(architectural_features_per_group, emsize) if style_encoder_generator is not None else None,
+            **model_extra_args
+        )
     model.criterion = criterion
     if load_weights_from_this_state_dict is not None:
         model.load_state_dict(load_weights_from_this_state_dict)
-    if initialize_with_model is not None:
-        model.init_from_small_model(initialize_with_model)
 
     print(f"Using a Transformer with {sum(p.numel() for p in model.parameters())/1000/1000:.{2}f} M parameters")
 
@@ -162,7 +148,7 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank],
                                                           output_device=rank,
                                                           broadcast_buffers=False,
-                                                          find_unused_parameters=test_batch.mean_prediction is not None)
+                                                          )
         dl.model = model.module # use local model, should not use multi-gpu functionality..
     else:
         dl.model = model
@@ -185,7 +171,6 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         importance_sampling_infos = []  # Renamed from squared_grad_magnitudes_and_infos
 
         for batch, full_data in enumerate(dl):
-            data = (full_data.style.to(device) if full_data.style is not None else None, full_data.x.to(device), full_data.y.to(device))
             targets = full_data.target_y.to(device) # shape: seq_len, batch_size, n_targets_per_input
             single_eval_pos = full_data.single_eval_pos
 
@@ -206,9 +191,11 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                 try:
                     metrics_to_log = {}
                     with autocast(device.split(':')[0], enabled=scaler is not None):
+                        style = full_data.style.to(device) if full_data.style is not None else None
+                        x = full_data.x.to(device)
+                        y = full_data.y.to(device)
                         # If style is set to None, it should not be transferred to device
-                        out = model(tuple(e.to(device) if torch.is_tensor(e) else e for e in data),
-                                    single_eval_pos=single_eval_pos, only_return_standard_out=False)
+                        out = model(x, y[:single_eval_pos], style=style, only_return_standard_out=False)
 
                         # this handling is for training old models only, this can be deleted soon(ish)
                         # to only support models that return a tuple of dicts
@@ -240,27 +227,10 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                         elif isinstance(criterion, (nn.MSELoss, nn.BCEWithLogitsLoss)):
                             targets[torch.isnan(targets)] = -100
                             losses = criterion(output.flatten(), targets.flatten())
+                            losses = losses.view(*targets.shape)
                         elif isinstance(criterion, nn.CrossEntropyLoss):
                             targets[torch.isnan(targets)] = -100
                             losses = criterion(output.reshape(-1, n_out), targets.long().flatten())
-                        elif border_decoder is not None:
-                            def apply_batch_wise_criterion(i):
-                                output_, targets_, borders_ = output_adaptive[:, i], targets[:, i], borders[i]
-                                criterion_ = get_custom_bar_dist(borders_, criterion).to(device)
-                                return criterion_(output_, targets_)
-                            output_adaptive, borders = out['adaptive_bar'], output_once['borders']
-                            losses_adaptive_bar = torch.stack([apply_batch_wise_criterion(i) for i in range(output_adaptive.shape[1])], 1)
-                            losses_fixed_bar = criterion(output, targets)
-                            losses = (losses_adaptive_bar + losses_fixed_bar) / 2
-
-                            metrics_to_log = {**metrics_to_log,
-                                              **{'loss_fixed_bar': losses_fixed_bar.mean().cpu().detach().item(),
-                                                 'loss_adaptive_bar': losses_adaptive_bar.mean().cpu().detach().item()}}
-                        elif isinstance(criterion, BarDistribution) and full_data.mean_prediction:
-                            assert 'mean_prediction' in output_once
-                            utils.print_once('Using mean prediction for loss')
-                            losses = criterion(output, targets, mean_prediction_logits=output_once['mean_prediction'])
-                            # the mean pred loss appears as the last per sequence
                         else:
                             losses = criterion(output, targets.unsqueeze(-1))
                         losses = einops.rearrange(losses, 's (b t) -> s b t', t=n_targets_per_input) # sometimes the seq length can be one off
@@ -297,11 +267,13 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                             loss.cpu().item(),
                             total_normalized_grad_magnitude
                         ))
+                        # todo i should run metrics on this
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
 
                         if full_data.gradient_multipliers is not None:
                             assert aggregate_k_gradients == 1, "Scaling grads is only supported if you don't do grad acc."
                             assert all(full_data.gradient_multipliers.view(-1)[0] == full_data.gradient_multipliers.view(-1)[i] for i in range(full_data.gradient_multipliers.numel())), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
+                            # todo make print to see that this is actually running
                             with torch.no_grad():
                                 for w in model.parameters():
                                     w.grad = w.grad * full_data.gradient_multipliers.view(-1)[0]
@@ -418,21 +390,5 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
             model = model.module
             dl = None
-        return TrainingResult(total_loss, total_positional_losses, model.to('cpu'), dl)
-
-def _parse_args(config_parser, parser):
-    # Do we have a config file to parse?
-    args_config, remaining = config_parser.parse_known_args()
-    if args_config.config:
-        with open(args_config.config, 'r') as f:
-            cfg = yaml.safe_load(f)
-            parser.set_defaults(**cfg)
-
-    # The main arg parser parses the rest of the args, the usual
-    # defaults will have been overridden if config file specified.
-    args = parser.parse_args(remaining)
-
-    # Cache the args as a text string to save them in the output dir later
-    args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
-    return args, args_text
-
+        return TrainingResult(total_loss, total_positional_losses, model.to('cpu'), dl,
+                              ), {"total_time": time.time() - total_start_time}

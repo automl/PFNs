@@ -15,16 +15,25 @@ def test_attention():
     dtype = torch.float16 if device == "cuda" else torch.float32
 
     x_q = torch.normal(
-        torch.tensor(0.0), torch.tensor(1.0), size=(n_batch, n_seq_q, embed_dim)
+        torch.tensor(0.0),
+        torch.tensor(1.0),
+        size=(n_batch, n_seq_q, embed_dim),
     )
     x_kv = torch.normal(
-        torch.tensor(0.0), torch.tensor(1.0), size=(n_batch, n_seq_kv, embed_dim)
+        torch.tensor(0.0),
+        torch.tensor(1.0),
+        size=(n_batch, n_seq_kv, embed_dim),
     )
     x_q = x_q.to(device, dtype)
     x_kv = x_kv.to(device, dtype)
 
     att_ref = torch.nn.MultiheadAttention(
-        embed_dim, nhead, batch_first=True, bias=False, device=device, dtype=dtype
+        embed_dim,
+        nhead,
+        batch_first=True,
+        bias=False,
+        device=device,
+        dtype=dtype,
     )
     att_test = MultiHeadAttention(
         input_size=embed_dim,
@@ -53,7 +62,11 @@ def test_attention():
     x_q_ = x_q.clone()
     with torch.no_grad():
         y__ = att_test(
-            x_q_, x_kv, add_input=True, allow_inplace=True, save_peak_mem_factor=7
+            x_q_,
+            x_kv,
+            add_input=True,
+            allow_inplace=True,
+            save_peak_mem_factor=7,
         )
     assert torch.sqrt(torch.nn.functional.mse_loss(y + x_q, y__)) < 5e-5
 

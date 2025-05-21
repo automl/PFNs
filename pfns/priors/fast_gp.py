@@ -1,11 +1,15 @@
+# fmt: off
+
 import time
+
+import gpytorch
 
 import torch
 from torch import nn
-import gpytorch
+
+from ..utils import default_device
 
 from .prior import Batch
-from ..utils import default_device
 
 
 # We will use the simplest form of GP model, exact inference

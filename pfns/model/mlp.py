@@ -6,9 +6,9 @@ from enum import Enum
 from functools import partial
 
 import torch
-from torch.utils.checkpoint import checkpoint
 
 from pfns.model.save_peak_memory import support_save_peak_mem_factor
+from torch.utils.checkpoint import checkpoint
 
 
 class Activation(Enum):
@@ -91,7 +91,9 @@ class MLP(torch.nn.Module):
         if initialize_output_to_zero:
             torch.nn.init.zeros_(self.linear2.weight)
         if recompute:
-            self.forward = partial(checkpoint, self.forward, use_reentrant=False)  # type: ignore
+            self.forward = partial(
+                checkpoint, self.forward, use_reentrant=False
+            )  # type: ignore
 
     @support_save_peak_mem_factor  # type: ignore
     def _compute(self, x: torch.Tensor) -> torch.Tensor:

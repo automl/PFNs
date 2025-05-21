@@ -1,15 +1,14 @@
-from pfns.model.save_peak_memory import support_save_peak_mem_factor
-
-import torch
-
-
 import functools
 from typing import Any
+
+import torch
+from pfns.model.save_peak_memory import support_save_peak_mem_factor
 
 # This empirically seems to be the hidden size
 # from which on it makes sense to use a full fp32 layer norm
 # because the fp16 layer norm becomes unstable
 HIDDEN_SIZE_LIMIT = 512
+
 
 class LayerNorm(torch.nn.LayerNorm):
     """Custom LayerNorm module that supports saving peak memory factor.
@@ -48,8 +47,13 @@ class LayerNorm(torch.nn.LayerNorm):
         # WARNING: this could lead to instabilities for higher hidden sizes (> 512),
         # thus we only do this for smaller hidden sizes
 
-        if x.dtype == torch.float16 and sum(self.normalized_shape) < HIDDEN_SIZE_LIMIT:
-            with torch.amp.autocast("cuda" if x.is_cuda else "cpu", enabled=False):
+        if (
+            x.dtype == torch.float16
+            and sum(self.normalized_shape) < HIDDEN_SIZE_LIMIT
+        ):
+            with torch.amp.autocast(
+                "cuda" if x.is_cuda else "cpu", enabled=False
+            ):
                 return super().forward(x)
 
         return super().forward(x)

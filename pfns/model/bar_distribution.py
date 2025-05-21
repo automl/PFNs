@@ -9,18 +9,20 @@ which is the loss used for training.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
-from typing_extensions import override
+from typing import Any, TYPE_CHECKING
 
 import torch
 from torch import nn
+from typing_extensions import override
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
 
 
 class BarDistribution(nn.Module):
-    def __init__(self, borders: torch.Tensor, *, ignore_nan_targets: bool = True):
+    def __init__(
+        self, borders: torch.Tensor, *, ignore_nan_targets: bool = True
+    ):
         """Loss for a distribution over bars. The bars are defined by the borders.
         The loss is the negative log density of the distribution. The density is defined
         as a softmax over the logits, where the softmax is scaled by the width of the
@@ -41,13 +43,17 @@ class BarDistribution(nn.Module):
         self.register_buffer("borders", borders)
         full_width = self.bucket_widths.sum()
 
-        assert (1 - (full_width / (self.borders[-1] - self.borders[0]))).abs() < 1e-2, (
+        assert (
+            1 - (full_width / (self.borders[-1] - self.borders[0]))
+        ).abs() < 1e-2, (
             f"diff: {full_width - (self.borders[-1] - self.borders[0])} with"
             f" {full_width} {self.borders[-1]} {self.borders[0]}"
         )
 
         # This also allows size zero buckets
-        assert (self.bucket_widths >= 0.0).all(), "Please provide sorted borders!"
+        assert (
+            self.bucket_widths >= 0.0
+        ).all(), "Please provide sorted borders!"
 
         self.ignore_nan_targets = ignore_nan_targets
         self.to(borders.device)
@@ -86,7 +92,8 @@ class BarDistribution(nn.Module):
         prob_left_of_bucket = prob_so_far.gather(-1, buckets_of_ys)
 
         share_of_bucket_left = (
-            (ys - self.borders[buckets_of_ys]) / self.bucket_widths[buckets_of_ys]
+            (ys - self.borders[buckets_of_ys])
+            / self.bucket_widths[buckets_of_ys]
         ).clamp(0.0, 1.0)
         prob_in_bucket = probs.gather(-1, buckets_of_ys) * share_of_bucket_left
 
@@ -153,7 +160,9 @@ class BarDistribution(nn.Module):
         probs = torch.stack(
             [
                 bar_dist.get_probs_for_different_borders(logits, self.borders)
-                for bar_dist, logits in zip(list_of_bar_distributions, list_of_logits)
+                for bar_dist, logits in zip(
+                    list_of_bar_distributions, list_of_logits
+                )
             ],
             dim=0,
         )
@@ -192,7 +201,9 @@ class BarDistribution(nn.Module):
         bucket_log_probs = torch.log_softmax(logits, -1)
         return bucket_log_probs - torch.log(self.bucket_widths)
 
-    def full_ce(self, logits: torch.Tensor, probs: torch.Tensor) -> torch.Tensor:
+    def full_ce(
+        self, logits: torch.Tensor, probs: torch.Tensor
+    ) -> torch.Tensor:
         return -(probs * torch.log_softmax(logits, -1)).sum(-1)
 
     def forward(
@@ -241,7 +252,6 @@ class BarDistribution(nn.Module):
     def median(self, logits: torch.Tensor) -> torch.Tensor:
         return self.icdf(logits, 0.5)
 
-
     def icdf(self, logits: torch.Tensor, left_prob: float) -> torch.Tensor:
         """Implementation of the quantile function
         :param logits: Tensor of any shape, with the last dimension being logits
@@ -253,20 +263,26 @@ class BarDistribution(nn.Module):
         idx = (
             torch.searchsorted(
                 cumprobs,
-                left_prob * torch.ones(*cumprobs.shape[:-1], 1, device=logits.device),
+                left_prob
+                * torch.ones(*cumprobs.shape[:-1], 1, device=logits.device),
             )
             .squeeze(-1)
             .clamp(0, cumprobs.shape[-1] - 1)
         )  # this might not do the right for outliers
         cumprobs = torch.cat(
-            [torch.zeros(*cumprobs.shape[:-1], 1, device=logits.device), cumprobs],
+            [
+                torch.zeros(*cumprobs.shape[:-1], 1, device=logits.device),
+                cumprobs,
+            ],
             -1,
         )
 
         rest_prob = left_prob - cumprobs.gather(-1, idx[..., None]).squeeze(-1)
         left_border = self.borders[idx]
         right_border = self.borders[idx + 1]
-        return left_border + (right_border - left_border) * rest_prob / probs.gather(
+        return left_border + (
+            right_border - left_border
+        ) * rest_prob / probs.gather(
             -1,
             idx[..., None],
         ).squeeze(-1)
@@ -278,7 +294,10 @@ class BarDistribution(nn.Module):
     ) -> torch.Tensor:
         side_probs = (1.0 - center_prob) / 2
         return torch.stack(
-            (self.icdf(logits, side_probs), self.icdf(logits, 1.0 - side_probs)),
+            (
+                self.icdf(logits, side_probs),
+                self.icdf(logits, 1.0 - side_probs),
+            ),
             -1,
         )
 
@@ -330,9 +349,13 @@ class BarDistribution(nn.Module):
         bucket_diffs = self.borders[1:] - self.borders[:-1]
         assert maximize
         if not torch.is_tensor(best_f) or not len(best_f.shape):  # type: ignore
-            best_f = torch.full(logits[..., 0].shape, best_f, device=logits.device)  # type: ignore
+            best_f = torch.full(
+                logits[..., 0].shape, best_f, device=logits.device
+            )  # type: ignore
 
-        best_f = best_f[..., None].repeat(*[1] * len(best_f.shape), logits.shape[-1])  # type: ignore
+        best_f = best_f[..., None].repeat(
+            *[1] * len(best_f.shape), logits.shape[-1]
+        )  # type: ignore
         clamped_best_f = best_f.clamp(self.borders[:-1], self.borders[1:])
 
         # > bucket_contributions =
@@ -365,10 +388,14 @@ class BarDistribution(nn.Module):
         """
         assert maximize is True
         if not torch.is_tensor(best_f) or not len(best_f.shape):  # type: ignore
-            best_f = torch.full(logits[..., 0].shape, best_f, device=logits.device)  # type: ignore
+            best_f = torch.full(
+                logits[..., 0].shape, best_f, device=logits.device
+            )  # type: ignore
         p = torch.softmax(logits, -1)
         border_widths = self.borders[1:] - self.borders[:-1]
-        factor = 1.0 - ((best_f[..., None] - self.borders[:-1]) / border_widths).clamp(  # type: ignore
+        factor = 1.0 - (
+            (best_f[..., None] - self.borders[:-1]) / border_widths
+        ).clamp(  # type: ignore
             0.0,
             1.0,
         )
@@ -408,7 +435,9 @@ class BarDistribution(nn.Module):
         import matplotlib.pyplot as plt
 
         logits = logits.squeeze()
-        assert logits.dim() == 1, "logits should be 1d, at least after squeezing."
+        assert (
+            logits.dim() == 1
+        ), "logits should be 1d, at least after squeezing."
         if ax is None:
             ax = plt.gca()
         if zoom_to_quantile is not None:
@@ -526,7 +555,9 @@ class FullSupportBarDistribution(BarDistribution):
         log_probs[target_sample == 0] += side_normals[0].log_prob(
             (self.borders[1] - y[target_sample == 0]).clamp(min=0.00000001),
         ) + torch.log(self.bucket_widths[0])
-        log_probs[target_sample == self.num_bars - 1] += side_normals[1].log_prob(
+        log_probs[target_sample == self.num_bars - 1] += side_normals[
+            1
+        ].log_prob(
             (y[target_sample == self.num_bars - 1] - self.borders[-2]).clamp(
                 min=0.00000001,
             ),
@@ -561,7 +592,10 @@ class FullSupportBarDistribution(BarDistribution):
         """
         p_cdf = torch.rand(*logits.shape[:-1])
         return torch.tensor(
-            [self.icdf(logits[i, :] / t, p) for i, p in enumerate(p_cdf.tolist())],
+            [
+                self.icdf(logits[i, :] / t, p)
+                for i, p in enumerate(p_cdf.tolist())
+            ],
         )
 
     @override
@@ -624,14 +658,18 @@ class FullSupportBarDistribution(BarDistribution):
         assert maximize is True
         if not torch.is_tensor(best_f) or not len(best_f.shape):  # type: ignore
             # evaluation_points x batch
-            best_f = torch.full(logits[..., 0].shape, best_f, device=logits.device)  # type: ignore
+            best_f = torch.full(
+                logits[..., 0].shape, best_f, device=logits.device
+            )  # type: ignore
 
         assert best_f.shape == logits[..., 0].shape, (  # type: ignore
             f"best_f.shape: {best_f.shape}, logits.shape: {logits.shape}"  # type: ignore
         )
         p = torch.softmax(logits, -1)  # evaluation_points x batch
         border_widths = self.borders[1:] - self.borders[:-1]
-        factor = 1.0 - ((best_f[..., None] - self.borders[:-1]) / border_widths).clamp(  # type: ignore
+        factor = 1.0 - (
+            (best_f[..., None] - self.borders[:-1]) / border_widths
+        ).clamp(  # type: ignore
             0.0,
             1.0,
         )  # evaluation_points x batch x num_bars
@@ -645,12 +683,17 @@ class FullSupportBarDistribution(BarDistribution):
             (best_f - self.borders[-2]).clamp(min=0.0),
         )  # evaluation_points x batch
         factor[..., 0] = 0.0
-        factor[..., 0][position_in_side_normals[0] > 0.0] = side_normals[0].cdf(
+        factor[..., 0][position_in_side_normals[0] > 0.0] = side_normals[
+            0
+        ].cdf(
             position_in_side_normals[0][position_in_side_normals[0] > 0.0],
         )
         factor[..., -1] = 1.0
-        factor[..., -1][position_in_side_normals[1] > 0.0] = 1.0 - side_normals[1].cdf(
-            position_in_side_normals[1][position_in_side_normals[1] > 0.0],
+        factor[..., -1][position_in_side_normals[1] > 0.0] = (
+            1.0
+            - side_normals[1].cdf(
+                position_in_side_normals[1][position_in_side_normals[1] > 0.0],
+            )
         )
         return (p * factor).sum(-1)
 
@@ -673,7 +716,9 @@ class FullSupportBarDistribution(BarDistribution):
         assert maximize
         mean = torch.tensor(0.0)
         u = (mean - best_f) / scale
-        normal = torch.distributions.Normal(torch.zeros_like(u), torch.ones_like(u))
+        normal = torch.distributions.Normal(
+            torch.zeros_like(u), torch.ones_like(u)
+        )
         try:
             ucdf = normal.cdf(u)
         except ValueError:
@@ -696,7 +741,9 @@ class FullSupportBarDistribution(BarDistribution):
         bucket_diffs = self.borders[1:] - self.borders[:-1]
         assert maximize
         if not torch.is_tensor(best_f) or not len(best_f.shape):  # type: ignore
-            best_f = torch.full(logits[..., 0].shape, best_f, device=logits.device)  # type: ignore
+            best_f = torch.full(
+                logits[..., 0].shape, best_f, device=logits.device
+            )  # type: ignore
 
         assert best_f.shape == logits[..., 0].shape, (  # type: ignore
             f"best_f.shape: {best_f.shape}, logits.shape: {logits.shape}"  # type: ignore
@@ -706,7 +753,9 @@ class FullSupportBarDistribution(BarDistribution):
             *[1] * len(best_f.shape),  # type: ignore
             logits.shape[-1],
         )
-        clamped_best_f = best_f_per_logit.clamp(self.borders[:-1], self.borders[1:])
+        clamped_best_f = best_f_per_logit.clamp(
+            self.borders[:-1], self.borders[1:]
+        )
 
         # true bucket contributions
         bucket_contributions = (
@@ -732,11 +781,12 @@ class FullSupportBarDistribution(BarDistribution):
         bucket_contributions[..., 0] = self.ei_for_halfnormal(
             side_normals[0].scale,
             torch.zeros_like(position_in_side_normals[0]),
-        ) - self.ei_for_halfnormal(side_normals[0].scale, position_in_side_normals[0])
+        ) - self.ei_for_halfnormal(
+            side_normals[0].scale, position_in_side_normals[0]
+        )
 
         p = torch.softmax(logits, -1)
         return torch.einsum("...b,...b->...", p, bucket_contributions)
-
 
     def cdf(self, logits: torch.Tensor, ys: torch.Tensor) -> torch.Tensor:
         """Cumulative distribution function.
@@ -748,9 +798,10 @@ class FullSupportBarDistribution(BarDistribution):
         Warning: The cdf is wrong in the border buckets and thus we raise a NotImplementedError there.
         """
         if (ys < self.borders[1]).any() or (ys > self.borders[-2]).any():
-            raise NotImplementedError("We cannot compute the cdf for bordert buckets.")
+            raise NotImplementedError(
+                "We cannot compute the cdf for bordert buckets."
+            )
         return self.cdf(logits, ys)
-
 
 
 def get_bucket_borders(
@@ -813,7 +864,8 @@ def get_bucket_borders(
         class_width = (full_range[1] - full_range[0]) / num_outputs  # type: ignore
         borders = torch.cat(
             [
-                full_range[0] + torch.arange(num_outputs).float() * class_width,  # type: ignore
+                full_range[0]
+                + torch.arange(num_outputs).float() * class_width,  # type: ignore
                 torch.tensor(full_range[1]).unsqueeze(0),  # type: ignore
             ],
             0,

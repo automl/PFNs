@@ -8,6 +8,7 @@ from typing import Any
 
 import torch
 
+
 def support_save_peak_mem_factor(method: MethodType) -> Callable:
     """Can be applied to a method acting on a tensor 'x' whose first dimension is a
     flat batch dimension
@@ -65,13 +66,17 @@ def support_save_peak_mem_factor(method: MethodType) -> Callable:
         if save_peak_mem_factor is not None:
             assert isinstance(save_peak_mem_factor, int)
             assert save_peak_mem_factor > 1
-            split_size = (x.size(0) + save_peak_mem_factor - 1) // save_peak_mem_factor
+            split_size = (
+                x.size(0) + save_peak_mem_factor - 1
+            ) // save_peak_mem_factor
 
             split_args = zip(
                 *[
-                    torch.split(arg, split_size)
-                    if isinstance(arg, torch.Tensor)
-                    else [arg] * save_peak_mem_factor
+                    (
+                        torch.split(arg, split_size)
+                        if isinstance(arg, torch.Tensor)
+                        else [arg] * save_peak_mem_factor
+                    )
                     for arg in (x, *args)
                 ],
             )

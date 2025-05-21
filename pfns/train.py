@@ -43,7 +43,7 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
           train_state_dict_save_path=None, train_state_dict_load_path=None,
           y_encoder_generator=None, decoder_dict={}, extra_prior_kwargs_dict={}, scheduler=get_cosine_schedule_with_warmup,
           load_weights_from_this_state_dict=None, validation_period=10, single_eval_pos_gen=None, gpu_device='cuda:0',
-          aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None, features_per_group=-1, train_mixed_precision=True, progress_bar=False, n_targets_per_input=1,
+          aggregate_k_gradients=1, verbose=True, style_encoder_generator=None, y_style_encoder_generator=None, epoch_callback=None, step_callback=None, continue_model=None, features_per_group=-1, train_mixed_precision=True, progress_bar=False, n_targets_per_input=1,
           dataloader_class=priors.utils.StandardDataLoader, num_workers=None, **model_extra_args
           ):
 
@@ -101,7 +101,8 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
             nlayers=nlayers,
             nhead=nhead,
             attention_between_features=features_per_group != -1,
-            style_encoder=style_encoder_generator(architectural_features_per_group, emsize) if style_encoder_generator is not None else None,
+            style_encoder=style_encoder_generator(architectural_features_per_group, emsize) if style_encoder_generator is not None else None,  # the style encoder maps a tensor (batch_size [* num feature groups], [features in this group,] num styles) to (batch_size [* num feature groups], emsize)
+            y_style_encoder=y_style_encoder_generator(emsize) if y_style_encoder_generator is not None else None, # the y_style encoder maps a tensor (batch_size, num y styles) to (batch_size, emsize)
             **model_extra_args
         )
     model.criterion = criterion
@@ -192,10 +193,27 @@ def train(get_batch_method: prior.PriorDataLoader | callable, criterion, encoder
                     metrics_to_log = {}
                     with autocast(device.split(':')[0], enabled=scaler is not None):
                         style = full_data.style.to(device) if full_data.style is not None else None
+                        if style is not None:
+                            if style.dim() == 2:
+                                broken = style.shape[0] != full_data.x.shape[1]
+                            elif style.dim() == 3:
+                                broken = style.shape[0] != full_data.x.shape[1] or style.shape[1] != full_data.x.shape[2]
+                            else:
+                                raise ValueError(f"style must have 2 or 3 dimensions, got {style.shape}")
+                            if broken:
+                                raise ValueError(f"style must have the same batch size as x and if it has 3 dimensions, the middle dimension must match the number of features, got {style.shape=} and {full_data.x.shape=}")
+                        y_style = full_data.y_style.to(device) if full_data.y_style is not None else None
+                        if y_style is not None:
+                            if y_style.dim() == 2:
+                                broken = y_style.shape[0] != full_data.y.shape[1]
+                            else:
+                                raise ValueError(f"y_style must have 2 dimensions, got {y_style.shape}")
+                            if broken:
+                                raise ValueError(f"y_style must have the same batch size as y, got {y_style.shape=} and {full_data.y.shape=}")
                         x = full_data.x.to(device)
                         y = full_data.y.to(device)
                         # If style is set to None, it should not be transferred to device
-                        out = model(x, y[:single_eval_pos], style=style, only_return_standard_out=False)
+                        out = model(x, y[:single_eval_pos], style=style, y_style=y_style, only_return_standard_out=False)
 
                         # this handling is for training old models only, this can be deleted soon(ish)
                         # to only support models that return a tuple of dicts

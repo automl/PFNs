@@ -74,6 +74,7 @@ class PerFeatureTransformer(nn.Module):
         cache_trainset_representation: bool = False,
         seed: int | None = None,
         style_encoder: nn.Module | None = None,
+        y_style_encoder: nn.Module | None = None,
         attention_between_features: bool = True,
         **layer_kwargs: Any,
     ):
@@ -124,6 +125,8 @@ class PerFeatureTransformer(nn.Module):
             precomputed_kv: Experimental
             style_encoder: A nn.Module that per dataset takes in a single style vector (batch_size, -1)
                 or one style vector per feature (batch_size, num_features, -1) and returns a style embedding of the shape (batch_size, ninp)
+            y_style_encoder: A nn.Module that per dataset takes in a single style vector (batch_size, -1) and returns a style embedding of the shape (batch_size, ninp)
+            attention_between_features: If True, apply attention between feature groups. If False, use the old PFN architecture, see https://github.com/automl/TransformersCanDoBayesianInference
             layer_kwargs: Keyword arguments passed to the `PerFeatureEncoderLayer`.
                 Possible arguments include:
                 - `layer_norm_eps`: Epsilon for layer normalization.
@@ -132,7 +135,6 @@ class PerFeatureTransformer(nn.Module):
                 - `second_mlp`: Include a second MLP in the layer.
                 - `layer_norm_with_elementwise_affine`: Use elementwise affine in layer norm.
                 - `save_peak_mem_factor`: Factor to save peak memory (post-norm only).
-                - `attention_between_features`: Apply attention between feature blocks.
                 - `multiquery_item_attention`: Use multiquery attention for all items.
                 - `multiquery_item_attention_for_test_set`: Use multiquery attention for the test set.
                 - `attention_init_gain`: Gain for initializing attention parameters.
@@ -212,8 +214,12 @@ class PerFeatureTransformer(nn.Module):
         self.seed = seed if seed is not None else random.randint(0, 1_000_000)  # noqa: S311
 
         self.style_encoder = style_encoder
+        if y_style_encoder is not None:
+            assert attention_between_features, "Attention between features must be True when using a y_style_encoder, otherwise only use a style_encoder."
+        self.y_style_encoder = y_style_encoder
+        
 
-    def forward(self, x: torch.Tensor | None, y: torch.Tensor | None, test_x: torch.Tensor | None = None, style: torch.Tensor | None = None, **kwargs) -> dict[str, torch.Tensor]:  # noqa: D417
+    def forward(self, x: torch.Tensor | None, y: torch.Tensor | None, test_x: torch.Tensor | None = None, style: torch.Tensor | None = None, y_style: torch.Tensor | None = None, **kwargs) -> dict[str, torch.Tensor]:  # noqa: D417
         """
         x can either contain both the train and test part, or the test part can be passed as test_x.
 
@@ -225,6 +231,7 @@ class PerFeatureTransformer(nn.Module):
             test_x: (seq_len_test, batch_size, num_features) The input data for the test set.
                 When predicting from cached trainset representations, test_x can be None (using x instead) or contain the test set.
             style: (batch_size, style_dim) or (batch_size, num_features, style_dim) The style vector
+            y_style: (batch_size, style_dim) The style vector for the y data
             **kwargs: Keyword arguments passed to the `_forward` method:
                 - `only_return_standard_out`: Whether to only return the standard output.
                 - `categorical_inds`: The indices of categorical features. A single list of indices for the whole batch:
@@ -246,7 +253,7 @@ class PerFeatureTransformer(nn.Module):
                 assert single_eval_pos == len(x)
                 x = torch.cat((x, test_x), dim=0)
         
-        return self._forward(x, y, single_eval_pos=single_eval_pos, style=style, **kwargs)
+        return self._forward(x, y, single_eval_pos=single_eval_pos, style=style, y_style=y_style, **kwargs)
 
     def _forward(  # noqa: PLR0912, C901
         self,
@@ -256,6 +263,7 @@ class PerFeatureTransformer(nn.Module):
         single_eval_pos: int | None = None,
         only_return_standard_out: bool = True,
         style: torch.Tensor | None = None,
+        y_style: torch.Tensor | None = None,
         categorical_inds: list[int] | None = None,
         half_layers: bool = False,
     ) -> Any | dict[str, torch.Tensor]:
@@ -272,6 +280,7 @@ class PerFeatureTransformer(nn.Module):
                 The position to evaluate at. If `None`, evaluate at all positions using the cached trainset representations.
             only_return_standard_out: Whether to only return the standard output.
             style: (batch_size, style_dim) or (batch_size, num_features, style_dim) The style vector
+            y_style: (batch_size, style_dim) The style vector for the y data
             categorical_inds: The indices of categorical features. A single list of indices for the whole batch:
                 these are shared between the datasets within a batch.
             half_layers: Whether to use the first half of the layers.
@@ -470,8 +479,26 @@ class PerFeatureTransformer(nn.Module):
         if style is not None:
             embedded_style = self.style_encoder(batched_style) # (batch num_groups) style_dim | (batch num_groups) num_features style_dim -> (batch num_groups) emsize
             embedded_style = einops.rearrange(embedded_style, "(b f) e -> b 1 f e", b=batch_size)  # (batch num_groups) emsize -> batch 1 num_groups emsize
-            embedded_style_with_0dim_at_y = torch.cat((embedded_style, torch.zeros(batch_size, 1, 1, embedded_style.shape[3], device=embedded_input.device, dtype=embedded_input.dtype)), dim=2)
-            embedded_input = torch.cat((embedded_style_with_0dim_at_y, embedded_input), dim=1)
+        else:
+            embedded_style = None
+
+        if y_style is not None:
+            embedded_y_style = self.y_style_encoder(y_style) # batch style_dim -> batch emsize
+            embedded_y_style = einops.rearrange(embedded_y_style, "b e -> b 1 1 e")  # batch emsize -> batch 1 1 emsize
+        else:
+            embedded_y_style = None
+        
+
+        if embedded_style is not None or embedded_y_style is not None:
+            if embedded_style is None:
+                embedded_style = torch.zeros(batch_size, 1, num_features, embedded_input.shape[3], device=embedded_input.device, dtype=embedded_input.dtype)
+            
+            if embedded_y_style is None:
+                embedded_y_style = torch.zeros(batch_size, 1, 1, embedded_input.shape[3], device=embedded_input.device, dtype=embedded_input.dtype)
+            
+            full_embedded_style = torch.cat((embedded_style, embedded_y_style), dim=2)
+            
+            embedded_input = torch.cat((full_embedded_style, embedded_input), dim=1)
             single_eval_pos_ += 1  # we added a style embedding
 
         if torch.isnan(embedded_input).any():

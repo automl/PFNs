@@ -317,7 +317,68 @@ def test_style_encoder(sample_data):
     assert isinstance(output2, torch.Tensor)
     assert output2.shape == (sample_data["seq_len_test"], sample_data["batch_size"], 1)
 
+def test_y_style_encoder(sample_data):
+    """Test the y_style encoder functionality."""
+    style_encoder = SimpleStyleEncoder(32)
+    
+    transformer = PerFeatureTransformer(
+        ninp=32,
+        nhead=2,
+        nhid=64,
+        nlayers=2,
+        style_encoder=style_encoder,
+        y_style_encoder=style_encoder
+    )
+    
+    # Create y_style vectors for each batch
+    y_style = torch.randn(sample_data["batch_size"], 5)
+    
+    output = transformer(
+        x=sample_data["train_x"],
+        y=sample_data["train_y"],
+        test_x=sample_data["test_x"],
+        y_style=y_style
+    )
+    
+    assert isinstance(output, torch.Tensor)
+    assert output.shape == (sample_data["seq_len_test"], sample_data["batch_size"], 1)
+    
+    # Test with both style and y_style
+    style = torch.randn(sample_data["batch_size"], 5)
+    
+    output2 = transformer(
+        x=sample_data["train_x"],
+        y=sample_data["train_y"],
+        test_x=sample_data["test_x"],
+        style=style,
+        y_style=y_style
+    )
+    
+    assert isinstance(output2, torch.Tensor)
+    assert output2.shape == (sample_data["seq_len_test"], sample_data["batch_size"], 1)
 
+    # Test per-feature style with both style and y_style
+    feature_style = torch.randn(sample_data["batch_size"], sample_data["num_features"], 5)
+    
+    transformer_per_feature = PerFeatureTransformer(
+        ninp=32,
+        nhead=2,
+        nhid=64,
+        nlayers=2,
+        style_encoder=style_encoder,
+        y_style_encoder=style_encoder,
+    )
+    
+    output3 = transformer_per_feature(
+        x=sample_data["train_x"],
+        y=sample_data["train_y"],
+        test_x=sample_data["test_x"],
+        style=feature_style,
+        y_style=y_style
+    )
+    
+    assert isinstance(output3, torch.Tensor)
+    assert output3.shape == (sample_data["seq_len_test"], sample_data["batch_size"], 1)
 
 
 @pytest.mark.parametrize(

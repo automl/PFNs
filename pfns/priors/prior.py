@@ -23,6 +23,7 @@ class Batch:
 
     # Optional Batch Entries
     style: Optional[torch.Tensor] = None
+    y_style: Optional[torch.Tensor] = None
     style_hyperparameter_values: Optional[torch.Tensor] = None
     single_eval_pos: Optional[torch.Tensor] = None
     causal_model_dag: Optional[object] = None

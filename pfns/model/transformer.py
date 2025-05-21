@@ -23,7 +23,7 @@ from torch.utils.checkpoint import checkpoint
 DEFAULT_EMSIZE = 128
 
 
-class PerFeatureTransformer(nn.Module):
+class TableTransformer(nn.Module):
     """A Transformer model processes a token per feature and sample.
 
     This model extends the standard Transformer architecture to operate on a

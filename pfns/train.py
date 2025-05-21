@@ -30,17 +30,6 @@ class Losses:
     get_BarDistribution = BarDistribution
 
 
-class TrainingResult(tp.NamedTuple):
-    # the mean loss in the last epoch across dataset sizes (single_eval_pos's)
-    total_loss: tp.Optional[float]
-    # the mean loss in the last epoch for each dataset size (single_eval_pos's)
-    total_positional_losses: tp.Optional[tp.List[float]]
-    # the trained model
-    model: nn.Module
-    # the dataloader used for training
-    data_loader: tp.Optional[torch.utils.data.DataLoader]
-
-
 class EpochResult(tp.NamedTuple):
     loss: float  # total loss for the epoch
     positional_losses: list  # list of losses per position
@@ -154,7 +143,7 @@ def train(
         y_encoder = (
             y_encoder_generator(1, emsize) if y_encoder_generator else None
         )
-        model = transformer.PerFeatureTransformer(
+        model = transformer.TableTransformer(
             encoder=encoder,
             y_encoder=y_encoder,
             features_per_group=architectural_features_per_group,
@@ -641,12 +630,13 @@ def train(
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
             model = model.module
             dl = None
-        return TrainingResult(
-            total_loss,
-            total_positional_losses,
-            model.to("cpu"),
-            dl,
-        ), {"total_time": time.time() - total_start_time}
+        return {
+            "total_loss": total_loss,
+            "total_positional_losses": total_positional_losses,
+            "model": model.to("cpu"),
+            "data_loader": dl,
+            "total_time": time.time() - total_start_time,
+        }
 
 
 def load_checkpoint(

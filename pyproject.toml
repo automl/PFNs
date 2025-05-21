@@ -32,6 +32,7 @@ dependencies=[
         'usort==1.0.8.post1',
         'ruff-api==0.1.0',
         'stdlibs==2024.1.28',
+        'pytest>=5.4.3',
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

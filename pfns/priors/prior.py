@@ -24,6 +24,10 @@ class Batch:
     y: torch.Tensor
     target_y: torch.Tensor
 
+    # This needs to be true, but you also need to make sure the batch dimension comes first
+    # That means the shape of x is (batch_size, seq_len, num_features)
+    batch_first: bool = False
+
     # Optional Batch Entries
     style: Optional[torch.Tensor] = None
     y_style: Optional[torch.Tensor] = None

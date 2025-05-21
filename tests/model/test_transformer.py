@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
+import torch.optim as optim
 
 from pfns.model import encoders, transformer
 from pfns.model.transformer import (
@@ -8,6 +9,7 @@ from pfns.model.transformer import (
     isolate_torch_rng,
     PerFeatureTransformer,
 )
+from torch.nn import CrossEntropyLoss
 
 
 class SimpleStyleEncoder(nn.Module):
@@ -22,16 +24,30 @@ class SimpleStyleEncoder(nn.Module):
             return self.linear(x).sum(dim=1)
 
 
+@pytest.fixture(
+    params=[True, False], ids=["batch_first_True", "batch_first_False"]
+)
+def batch_first_setting(request):
+    """Provides True for batch_first=True and False for batch_first=False."""
+    return request.param
+
+
 @pytest.fixture
-def sample_data():
+def sample_data(batch_first_setting):
+    is_batch_first = batch_first_setting
     batch_size = 4
     seq_len_train = 10
     seq_len_test = 5
     num_features = 3
 
-    train_x = torch.randn(seq_len_train, batch_size, num_features)
-    train_y = torch.randn(seq_len_train, batch_size, 1)
-    test_x = torch.randn(seq_len_test, batch_size, num_features)
+    if is_batch_first:
+        train_x = torch.randn(batch_size, seq_len_train, num_features)
+        train_y = torch.randn(batch_size, seq_len_train, 1)
+        test_x = torch.randn(batch_size, seq_len_test, num_features)
+    else:
+        train_x = torch.randn(seq_len_train, batch_size, num_features)
+        train_y = torch.randn(seq_len_train, batch_size, 1)
+        test_x = torch.randn(seq_len_test, batch_size, num_features)
 
     return {
         "train_x": train_x,
@@ -41,6 +57,7 @@ def sample_data():
         "seq_len_train": seq_len_train,
         "seq_len_test": seq_len_test,
         "num_features": num_features,
+        "batch_first": is_batch_first,  # Store the flag
     }
 
 
@@ -56,70 +73,105 @@ def test_transformer_init():
 
 def test_transformer_forward(sample_data):
     """Test basic forward pass with default parameters."""
-    transformer = PerFeatureTransformer(ninp=32, nhead=2, nhid=64, nlayers=2)
+    model_batch_first = sample_data["batch_first"]
+    transformer_model = PerFeatureTransformer(
+        ninp=32, nhead=2, nhid=64, nlayers=2, batch_first=model_batch_first
+    )
 
-    output = transformer(
+    output = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
     )
 
     assert isinstance(output, torch.Tensor)
-    assert output.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
+    if model_batch_first:
+        assert output.shape == (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            1,
+        )
+    else:
+        assert output.shape == (
+            sample_data["seq_len_test"],
+            sample_data["batch_size"],
+            1,
+        )
 
 
-def test_transformer_seed_behavior(sample_data):
-    """Test that using the same seed produces the same outputs."""
-    seed = 42
-
-    # Create two transformers with the same seed
+def test_add_embeddings_normal_rand_vec():
+    """Test that add_embeddings adds the same embeddings when using normal_rand_vec."""
+    # Create a transformer with normal_rand_vec feature positional embedding
     transformer = PerFeatureTransformer(
-        ninp=32,
-        nhead=2,
-        nhid=64,
-        nlayers=2,
+        ninp=64,
+        nhead=4,
+        nhid=256,
+        nlayers=6,
         feature_positional_embedding="normal_rand_vec",
-        seed=seed,
+        seed=42,
     )
 
-    # Run both models
-    output1 = transformer(
-        x=sample_data["train_x"],
-        y=sample_data["train_y"],
-        test_x=sample_data["test_x"],
+    # Create two identical zero tensors
+    batch_size = 2
+    seq_len = 3
+    num_groups = 4
+    emsize = 64
+
+    x1 = torch.zeros((batch_size, seq_len, num_groups, emsize), device="cpu")
+    y1 = torch.zeros((batch_size, seq_len, emsize), device="cpu")
+
+    x2 = torch.zeros((batch_size, seq_len, num_groups, emsize), device="cpu")
+    y2 = torch.zeros((batch_size, seq_len, emsize), device="cpu")
+
+    # Add embeddings to both sets of tensors
+    x1_out, y1_out = transformer.add_embeddings(
+        x1,
+        y1,
+        num_features=num_groups,
+        seq_len=seq_len,
+        cache_embeddings=False,
+        use_cached_embeddings=False,
     )
 
-    output2 = transformer(
-        x=sample_data["train_x"],
-        y=sample_data["train_y"],
-        test_x=sample_data["test_x"],
+    x2_out, y2_out = transformer.add_embeddings(
+        x2,
+        y2,
+        num_features=num_groups,
+        seq_len=seq_len,
+        cache_embeddings=False,
+        use_cached_embeddings=False,
     )
 
-    # Outputs should be identical with the same seed
-    assert torch.allclose(output1, output2)
+    # Check that the embeddings are the same
+    assert torch.allclose(
+        x1_out, x2_out
+    ), "Embeddings added to x should be identical with the same seed"
+    assert torch.allclose(
+        y1_out, y2_out
+    ), "Embeddings added to y should be identical with the same seed"
 
-    # Create a transformer with a different seed
-    transformer3 = PerFeatureTransformer(
-        ninp=32,
-        nhead=2,
-        nhid=64,
-        nlayers=2,
-        feature_positional_embedding="normal_rand_vec",
-        seed=seed + 1,
+    # Check that the embeddings are not zero (they were actually added)
+    assert not torch.allclose(
+        x1_out, torch.zeros_like(x1_out)
+    ), "Embeddings should change the zero tensor"
+
+    x3 = torch.zeros((batch_size, seq_len, num_groups, emsize), device="cpu")
+    y3 = torch.zeros((batch_size, seq_len, emsize), device="cpu")
+
+    transformer.seed = 43
+    x3_out, y3_out = transformer.add_embeddings(
+        x3,
+        y3,
+        num_features=num_groups,
+        seq_len=seq_len,
+        cache_embeddings=False,
+        use_cached_embeddings=False,
     )
 
-    output3 = transformer3(
-        x=sample_data["train_x"],
-        y=sample_data["train_y"],
-        test_x=sample_data["test_x"],
-    )
-
-    # Outputs should be different with a different seed
-    assert not torch.allclose(output1, output3)
+    # Check that embeddings are different with different seed
+    assert not torch.allclose(
+        x1_out, x3_out
+    ), "Embeddings should be different with different seeds"
 
 
 def test_isolate_torch_rng():
@@ -162,24 +214,67 @@ def test_feature_positional_embeddings(sample_data):
         "subspace",
         None,
     ]
+    model_batch_first = sample_data["batch_first"]
 
     for emb_type in embedding_types:
-        transformer = PerFeatureTransformer(
+        transformer_model = PerFeatureTransformer(
             ninp=32,
             nhead=2,
             nhid=64,
             nlayers=2,
             feature_positional_embedding=emb_type,
             seed=42,
+            batch_first=model_batch_first,
         )
 
-        output = transformer(
+        output = transformer_model(
             x=sample_data["train_x"],
             y=sample_data["train_y"],
             test_x=sample_data["test_x"],
         )
 
         assert isinstance(output, torch.Tensor)
+        if model_batch_first:
+            assert output.shape == (
+                sample_data["batch_size"],
+                sample_data["seq_len_test"],
+                1,
+            )
+        else:
+            assert output.shape == (
+                sample_data["seq_len_test"],
+                sample_data["batch_size"],
+                1,
+            )
+
+
+def test_features_per_group(sample_data):
+    """Test the features_per_group parameter."""
+    model_batch_first = sample_data["batch_first"]
+    # Set features_per_group=3 to match the number of features in sample data
+    transformer_model = PerFeatureTransformer(
+        ninp=32,
+        nhead=2,
+        nhid=64,
+        nlayers=2,
+        features_per_group=3,
+        batch_first=model_batch_first,
+    )
+
+    output = transformer_model(
+        x=sample_data["train_x"],
+        y=sample_data["train_y"],
+        test_x=sample_data["test_x"],
+    )
+
+    assert isinstance(output, torch.Tensor)
+    if model_batch_first:
+        assert output.shape == (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            1,
+        )
+    else:
         assert output.shape == (
             sample_data["seq_len_test"],
             sample_data["batch_size"],
@@ -187,55 +282,38 @@ def test_feature_positional_embeddings(sample_data):
         )
 
 
-def test_features_per_group(sample_data):
-    """Test the features_per_group parameter."""
-    # Set features_per_group=3 to match the number of features in sample data
-    transformer = PerFeatureTransformer(
-        ninp=32, nhead=2, nhid=64, nlayers=2, features_per_group=3
-    )
-
-    output = transformer(
-        x=sample_data["train_x"],
-        y=sample_data["train_y"],
-        test_x=sample_data["test_x"],
-    )
-
-    assert isinstance(output, torch.Tensor)
-    assert output.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
-
-
 @torch.inference_mode()
 def test_cache_trainset_representation(sample_data):
     """Test caching of trainset representations."""
-    transformer = PerFeatureTransformer(
+    model_batch_first = sample_data["batch_first"]
+    transformer_model = PerFeatureTransformer(
         ninp=32,
         nhead=2,
         nhid=64,
         nlayers=2,
         cache_trainset_representation=True,
+        batch_first=model_batch_first,
     )
 
     # First forward pass should cache the representations
-    output1 = transformer(
+    output1 = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
     )
 
     # Second forward pass should use the cached representations
-    output2 = transformer(x=None, y=None, test_x=sample_data["test_x"])
+    # For cached representation, x and y are None, test_x provides the query points.
+    # The format of test_x should match the model's batch_first setting.
+    output2 = transformer_model(x=None, y=None, test_x=sample_data["test_x"])
 
     assert torch.allclose(output1, output2)
 
     # Clear cache and results should be different
-    transformer.empty_trainset_representation_cache()
+    transformer_model.empty_trainset_representation_cache()
 
     # After clearing, we need to provide train data again
-    output3 = transformer(
+    output3 = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -261,12 +339,19 @@ def test_decoder_dict(sample_data):
         "custom": (CustomDecoder, 2),  # Custom decoder with 2 outputs
     }
 
-    transformer = PerFeatureTransformer(
-        ninp=32, nhead=2, nhid=64, nlayers=2, decoder_dict=decoder_dict
+    model_batch_first = sample_data["batch_first"]
+
+    transformer_model = PerFeatureTransformer(
+        ninp=32,
+        nhead=2,
+        nhid=64,
+        nlayers=2,
+        decoder_dict=decoder_dict,
+        batch_first=model_batch_first,
     )
 
     # Get all outputs
-    outputs = transformer(
+    outputs = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -276,30 +361,51 @@ def test_decoder_dict(sample_data):
     assert isinstance(outputs, dict)
     assert "standard" in outputs
     assert "custom" in outputs
-    assert outputs["standard"].shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
-    assert outputs["custom"].shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        2,
-    )
+
+    if model_batch_first:
+        expected_shape_standard = (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            1,
+        )
+        expected_shape_custom = (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            2,
+        )
+    else:
+        expected_shape_standard = (
+            sample_data["seq_len_test"],
+            sample_data["batch_size"],
+            1,
+        )
+        expected_shape_custom = (
+            sample_data["seq_len_test"],
+            sample_data["batch_size"],
+            2,
+        )
+    assert outputs["standard"].shape == expected_shape_standard
+    assert outputs["custom"].shape == expected_shape_custom
 
 
 def test_style_encoder(sample_data):
     """Test the style encoder functionality."""
-    style_encoder = SimpleStyleEncoder(32)
+    style_encoder_module = SimpleStyleEncoder(32)
+    model_batch_first = sample_data["batch_first"]
 
-    transformer = PerFeatureTransformer(
-        ninp=32, nhead=2, nhid=64, nlayers=2, style_encoder=style_encoder
+    transformer_model = PerFeatureTransformer(
+        ninp=32,
+        nhead=2,
+        nhid=64,
+        nlayers=2,
+        style_encoder=style_encoder_module,
+        batch_first=model_batch_first,
     )
 
-    # Create style vectors for each batch
+    # Create style vectors for each batch (always batch-first for style)
     style = torch.randn(sample_data["batch_size"], 5)
 
-    output = transformer(
+    output = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -307,18 +413,26 @@ def test_style_encoder(sample_data):
     )
 
     assert isinstance(output, torch.Tensor)
-    assert output.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
+    if model_batch_first:
+        expected_shape = (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            1,
+        )
+    else:
+        expected_shape = (
+            sample_data["seq_len_test"],
+            sample_data["batch_size"],
+            1,
+        )
+    assert output.shape == expected_shape
 
-    # Test per-feature style vectors
+    # Test per-feature style vectors (always batch-first for style)
     feature_style = torch.randn(
         sample_data["batch_size"], sample_data["num_features"], 5
     )
 
-    output2 = transformer(
+    output2 = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -326,30 +440,29 @@ def test_style_encoder(sample_data):
     )
 
     assert isinstance(output2, torch.Tensor)
-    assert output2.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
+    assert output2.shape == expected_shape
 
 
 def test_y_style_encoder(sample_data):
     """Test the y_style encoder functionality."""
-    style_encoder = SimpleStyleEncoder(32)
+    style_encoder_module = SimpleStyleEncoder(32)
+    model_batch_first = sample_data["batch_first"]
 
-    transformer = PerFeatureTransformer(
+    transformer_model = PerFeatureTransformer(
         ninp=32,
         nhead=2,
         nhid=64,
         nlayers=2,
-        style_encoder=style_encoder,
-        y_style_encoder=style_encoder,
+        style_encoder=style_encoder_module,  # y_style_encoder requires attention_between_features=True
+        y_style_encoder=style_encoder_module,
+        attention_between_features=True,  # Required for y_style_encoder
+        batch_first=model_batch_first,
     )
 
-    # Create y_style vectors for each batch
+    # Create y_style vectors for each batch (always batch-first for style)
     y_style = torch.randn(sample_data["batch_size"], 5)
 
-    output = transformer(
+    output = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -357,16 +470,24 @@ def test_y_style_encoder(sample_data):
     )
 
     assert isinstance(output, torch.Tensor)
-    assert output.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
+    if model_batch_first:
+        expected_shape = (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            1,
+        )
+    else:
+        expected_shape = (
+            sample_data["seq_len_test"],
+            sample_data["batch_size"],
+            1,
+        )
+    assert output.shape == expected_shape
 
     # Test with both style and y_style
     style = torch.randn(sample_data["batch_size"], 5)
 
-    output2 = transformer(
+    output2 = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -375,27 +496,14 @@ def test_y_style_encoder(sample_data):
     )
 
     assert isinstance(output2, torch.Tensor)
-    assert output2.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
+    assert output2.shape == expected_shape
 
     # Test per-feature style with both style and y_style
     feature_style = torch.randn(
         sample_data["batch_size"], sample_data["num_features"], 5
     )
 
-    transformer_per_feature = PerFeatureTransformer(
-        ninp=32,
-        nhead=2,
-        nhid=64,
-        nlayers=2,
-        style_encoder=style_encoder,
-        y_style_encoder=style_encoder,
-    )
-
-    output3 = transformer_per_feature(
+    output3 = transformer_model(
         x=sample_data["train_x"],
         y=sample_data["train_y"],
         test_x=sample_data["test_x"],
@@ -404,19 +512,22 @@ def test_y_style_encoder(sample_data):
     )
 
     assert isinstance(output3, torch.Tensor)
-    assert output3.shape == (
-        sample_data["seq_len_test"],
-        sample_data["batch_size"],
-        1,
-    )
+    assert output3.shape == expected_shape
 
 
 @pytest.mark.parametrize(
     "multiquery_item_attention_for_test_set",
     [False, True],
 )
+@pytest.mark.parametrize(
+    "model_batch_first_setting",
+    [True, False],
+    ids=["model_BF_True", "model_BF_False"],
+)
 @torch.inference_mode()
-def test_separate_train_inference(multiquery_item_attention_for_test_set):
+def test_separate_train_inference(
+    multiquery_item_attention_for_test_set, model_batch_first_setting
+):
     model = transformer.PerFeatureTransformer(
         encoder=encoders.SequentialEncoder(
             encoders.InputNormalizationEncoderStep(
@@ -424,14 +535,15 @@ def test_separate_train_inference(multiquery_item_attention_for_test_set):
                 normalize_to_ranking=False,
                 normalize_x=True,
                 remove_outliers=True,
-            ),  # makes it more interesting
+            ),
             encoders.LinearInputEncoderStep(
-                num_features=1,
+                num_features=1,  # This encoder expects 1 feature after grouping
                 emsize=transformer.DEFAULT_EMSIZE,
                 in_keys=["main"],
                 out_keys=["output"],
             ),
         ),
+        batch_first=model_batch_first_setting,
     )
 
     for p in model.parameters():
@@ -450,30 +562,148 @@ def test_separate_train_inference(multiquery_item_attention_for_test_set):
     device = "cpu"
 
     n_train = 10
-    n_features = 10
+    n_features = 10  # Should match features_per_group for this encoder setup
     n_test = 3
     batch_size = 2
-    x_train = torch.normal(
+    # Create data as sequence-first initially
+    x_train_sf = torch.normal(
         0.0,
         2.0,
         size=(n_train, batch_size, n_features),
         device=device,
     )
-    y = (x_train[:, :, :1] > 1.0).float().to(device).to(torch.float)
-    x_test = torch.normal(
+    y_sf = (x_train_sf[:, :, :1] > 1.0).float().to(device).to(torch.float)
+    x_test_sf = torch.normal(
         0.0,
         1.0,
         size=(n_test, batch_size, n_features),
         device=device,
     )
 
-    torch.manual_seed(12345)
-    model(x_train, y[:n_train])
-    logits1 = model(x_test, None)
+    # Prepare data based on model's batch_first setting
+    if model_batch_first_setting:
+        x_train_model = x_train_sf.transpose(0, 1)
+        y_model = y_sf.transpose(0, 1)
+        x_test_model = x_test_sf.transpose(0, 1)
+    else:
+        x_train_model = x_train_sf
+        y_model = y_sf
+        x_test_model = x_test_sf
 
     torch.manual_seed(12345)
-    logits1a = model(x_train, y, x_test)
+    # Pass only training part (x_train_model, y_model without test part)
+    # The model's forward method handles combining x and test_x if test_x is provided.
+    # Here, we are testing the two-step inference:
+    # 1. Prime with training data (x_train_model, y_model up to n_train)
+    # 2. Infer with test data (x_test_model, y=None)
+    model(
+        x_train_model,
+        y_model[:, :n_train]
+        if model_batch_first_setting
+        else y_model[:n_train, :],
+    )
+    logits1 = model(
+        x_test_model, None
+    )  # y is None for inference on x_test_model
+
+    torch.manual_seed(12345)
+    # Single call with train and test data
+    # model's forward will split y internally for _forward's single_eval_pos
+    logits1a = model(x_train_model, y_model, x_test_model)
 
     assert logits1.float() == pytest.approx(
         logits1a.float(), abs=1e-5
     ), f"{logits1} != {logits1a}"
+
+
+@pytest.mark.parametrize(
+    "attention_between_features",
+    [False, True],
+)
+def test_transformer_overfit(attention_between_features):
+    """Test that a tiny transformer can overfit a simple classification task."""
+
+    # Create a tiny transformer for a simple classification task
+    batch_size = 3
+    seq_len_train = 3  # 3 examples in context
+    seq_len_test = 3  # 3 examples to predict
+    emsize = 16  # Small embedding size
+    num_classes = 3  # 3-way classification
+
+    # Create a tiny transformer
+    transformer = PerFeatureTransformer(
+        ninp=emsize,
+        nhead=2,
+        nhid=32,
+        nlayers=2,
+        features_per_group=1,
+        seed=42,
+        device="cpu",
+        decoder_dict={"standard": (None, num_classes)},
+        attention_between_features=attention_between_features,
+    )
+
+    # # Add a classification head
+    # transformer.decoder_dict = torch.nn.ModuleDict({
+    #     "classification": torch.nn.Linear(emsize, num_classes)
+    # })
+
+    # Create training data: map input 0,1,2 to class 0,1,2
+    x_train = torch.zeros((batch_size, seq_len_train, 1), device="cpu")
+    y_train = torch.zeros((batch_size, seq_len_train, 1), device="cpu")
+
+    # Create test data with the same pattern
+    x_test = torch.zeros((batch_size, seq_len_test, 1), device="cpu")
+    y_test = torch.zeros(
+        (batch_size, seq_len_test), device="cpu", dtype=torch.long
+    )
+
+    # Set the first dimension of each feature to 0, 1, or 2 to represent our input
+    for i in range(batch_size):
+        for j in range(seq_len_train):
+            x_train[i, j] = j % num_classes  # Input is 0, 1, 2
+            y_train[i, j] = (j + i) % num_classes  # Input is 0, 1, 2
+
+        for j in range(seq_len_test):
+            x_test[i, j] = j % num_classes  # Input is 0, 1, 2
+            y_test[i, j] = (j + i) % num_classes  # Input is 0, 1, 2
+
+    # Set up optimizer
+    optimizer = optim.Adam(transformer.parameters(), lr=0.01)
+    criterion = CrossEntropyLoss()
+
+    # Train the model to overfit
+    transformer.train()
+    for step in range(50):
+        optimizer.zero_grad()
+
+        scramble = torch.randperm(seq_len_train)
+
+        # Forward pass
+        logits = transformer(
+            x=x_train[:, scramble],
+            y=y_train[:, scramble],
+            test_x=x_test,
+        )
+
+        # Calculate loss
+        loss = criterion(logits, y_test)
+
+        # Backward pass and optimize
+        loss.backward()
+        optimizer.step()
+
+        # Check if we've overfit
+        if step % 20 == 0 or step == 99:
+            with torch.no_grad():
+                # Get predictions
+                _, predicted = torch.max(logits, 1)
+                accuracy = (predicted == y_test).float().mean().item()
+                print(
+                    f"Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}"
+                )
+
+                if accuracy == 1.0 and loss.item() < 0.1:
+                    print("Successfully overfit the data!")
+                    return
+    raise Exception("Failed to overfit the data.")

@@ -41,6 +41,17 @@ class TrainingResult(tp.NamedTuple):
     data_loader: tp.Optional[torch.utils.data.DataLoader]
 
 
+class EpochResult(tp.NamedTuple):
+    loss: float  # total loss for the epoch
+    positional_losses: list  # list of losses per position
+    data_time: float  # time spent getting batch data
+    forward_time: float  # time spent in forward pass
+    step_time: float  # total time per step
+    nan_share: float  # share of NaN values
+    ignore_share: float  # share of ignored values (-100)
+    importance_sampling_infos: list  # gradient magnitude info
+
+
 def train(
     get_batch_method: prior.PriorDataLoader | callable,
     criterion,
@@ -197,32 +208,17 @@ def train(
 
     # Load checkpoint if provided
     if train_state_dict_load_path:
-        print(f"Loading checkpoint from {train_state_dict_load_path}")
-        try:
-            checkpoint = torch.load(
-                train_state_dict_load_path, map_location=device
+        if (train_state_dict_save_path != train_state_dict_load_path) or (
+            (train_state_dict_save_path == train_state_dict_load_path)
+            and os.path.exists(train_state_dict_load_path)
+        ):
+            load_checkpoint(
+                model, optimizer, scheduler, train_state_dict_load_path, device
             )
-            if (
-                isinstance(checkpoint, dict)
-                and "model_state_dict" in checkpoint
-            ):
-                # New format with model, optimizer state and epoch
-                model.load_state_dict(
-                    checkpoint["model_state_dict"], strict=True
-                )
-                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-                start_epoch = checkpoint["epoch"] + 1
-                print(f"Resuming from epoch {start_epoch}")
-                # Fast-forward the scheduler to the correct epoch
-                for _ in range(start_epoch - 1):
-                    scheduler.step()
-            else:
-                raise ValueError(
-                    f"Checkpoint does not contain 'model_state_dict' or 'optimizer_state_dict'. Checkpoint: {checkpoint}"
-                )
-        except Exception as e:
-            print(f"Error loading checkpoint: {e}")
-            raise e
+        else:
+            print(
+                f"Not loading checkpoint as {train_state_dict_load_path} does not exist yet. Will create it during training."
+            )
 
     if using_dist:
         print("Distributed training")
@@ -261,29 +257,15 @@ def train(
         )
         importance_sampling_infos = []  # Renamed from squared_grad_magnitudes_and_infos
 
-        for batch, full_data in enumerate(dl):
-            targets = full_data.target_y.to(
-                device
-            )  # shape: seq_len, batch_size, n_targets_per_input
-            single_eval_pos = full_data.single_eval_pos
-
-            def get_metrics():
-                return (
-                    total_loss / steps_per_epoch,
-                    (
-                        total_positional_losses
-                        / total_positional_losses_recorded
-                    ).tolist(),
-                    time_to_get_batch,
-                    forward_time,
-                    step_time,
-                    nan_steps.cpu().item() / (batch + 1),
-                    ignore_steps.cpu().item() / (batch + 1),
-                )
+        for batch_index, batch in enumerate(dl):
+            assert batch.batch_first, "batch_first must be true, make sure to adapt your prior to provide shapes like (batch_size, seq_len, ...)"
+            targets = batch.target_y.to(device)
+            single_eval_pos = batch.single_eval_pos
 
             tqdm_iter.update() if tqdm_iter is not None else None
             if using_dist and not (
-                batch % aggregate_k_gradients == aggregate_k_gradients - 1
+                batch_index % aggregate_k_gradients
+                == aggregate_k_gradients - 1
             ):
                 cm = model.no_sync()
             else:
@@ -297,17 +279,17 @@ def train(
                         device.split(":")[0], enabled=scaler is not None
                     ):
                         style = (
-                            full_data.style.to(device)
-                            if full_data.style is not None
+                            batch.style.to(device)
+                            if batch.style is not None
                             else None
                         )
                         if style is not None:
                             if style.dim() == 2:
-                                broken = style.shape[0] != full_data.x.shape[1]
+                                broken = style.shape[0] != batch.x.shape[0]
                             elif style.dim() == 3:
                                 broken = (
-                                    style.shape[0] != full_data.x.shape[1]
-                                    or style.shape[1] != full_data.x.shape[2]
+                                    style.shape[0] != batch.x.shape[0]
+                                    or style.shape[1] != batch.x.shape[2]
                                 )
                             else:
                                 raise ValueError(
@@ -315,39 +297,37 @@ def train(
                                 )
                             if broken:
                                 raise ValueError(
-                                    f"style must have the same batch size as x and if it has 3 dimensions, the middle dimension must match the number of features, got {style.shape=} and {full_data.x.shape=}"
+                                    f"style must have the same batch size as x and if it has 3 dimensions, "
+                                    f"the middle dimension must match the number of features, got {style.shape=} "
+                                    f"and {batch.x.shape=}"
                                 )
                         y_style = (
-                            full_data.y_style.to(device)
-                            if full_data.y_style is not None
+                            batch.y_style.to(device)
+                            if batch.y_style is not None
                             else None
                         )
                         if y_style is not None:
                             if y_style.dim() == 2:
-                                broken = (
-                                    y_style.shape[0] != full_data.y.shape[1]
-                                )
+                                broken = y_style.shape[0] != batch.y.shape[0]
                             else:
                                 raise ValueError(
                                     f"y_style must have 2 dimensions, got {y_style.shape}"
                                 )
                             if broken:
                                 raise ValueError(
-                                    f"y_style must have the same batch size as y, got {y_style.shape=} and {full_data.y.shape=}"
+                                    f"y_style must have the same batch size as y, got {y_style.shape=} "
+                                    f"and {batch.y.shape=}"
                                 )
-                        x = full_data.x.to(device)
-                        y = full_data.y.to(device)
-                        # If style is set to None, it should not be transferred to device
+                        x = batch.x.to(device)
+                        y = batch.y.to(device)
                         out = model(
                             x,
-                            y[:single_eval_pos],
+                            y[:, :single_eval_pos],
                             style=style,
                             y_style=y_style,
                             only_return_standard_out=False,
                         )
 
-                        # this handling is for training old models only, this can be deleted soon(ish)
-                        # to only support models that return a tuple of dicts
                         out, output_once = (
                             out if isinstance(out, tuple) else (out, None)
                         )
@@ -358,7 +338,7 @@ def train(
                         forward_time = time.time() - before_forward
 
                         if single_eval_pos is not None:
-                            targets = targets[single_eval_pos:]
+                            targets = targets[:, single_eval_pos:]
 
                         # Repeat output in the semi-last dimension n_targets_per_input times
                         output = output.unsqueeze(2).expand(
@@ -370,13 +350,14 @@ def train(
                         assert targets.shape == output.shape[:-1], (
                             f"Target shape {targets.shape} "
                             f"does not match output shape {output.shape}."
-                            f"This might be because you are missing trailing"
+                            f"This might be because you are missing trailing "
                             "1 dimension in the target."
                         )
+
                         output = einops.rearrange(
-                            output, "s b t l -> s (b t) l"
+                            output, "b s t l -> (b t) s l"
                         )
-                        targets = einops.rearrange(targets, "s b t -> s (b t)")
+                        targets = einops.rearrange(targets, "b s t -> (b t) s")
 
                         if isinstance(criterion, nn.GaussianNLLLoss):
                             assert (
@@ -407,14 +388,14 @@ def train(
                         else:
                             losses = criterion(output, targets.unsqueeze(-1))
                         losses = einops.rearrange(
-                            losses, "s (b t) -> s b t", t=n_targets_per_input
-                        )  # sometimes the seq length can be one off
-                        # that is because bar dist appends the mean
-                        losses = losses.mean(
-                            2
-                        )  # average over the n_targets_per_input
+                            losses, "(b t) s -> b s t", t=n_targets_per_input
+                        )
+                        losses = losses.mean(-1)
                         loss, nan_share = utils.torch_nanmean(
-                            losses.mean(0), return_nanshare=True
+                            losses.mean(
+                                1
+                            ),  # loss per sequence without nanmean
+                            return_nanshare=True,
                         )
                         loss_scaled = loss / aggregate_k_gradients
 
@@ -423,7 +404,7 @@ def train(
                     loss_scaled.backward()
 
                     if (
-                        batch % aggregate_k_gradients
+                        batch_index % aggregate_k_gradients
                         == aggregate_k_gradients - 1
                     ):
                         if scaler:
@@ -477,7 +458,7 @@ def train(
                         importance_sampling_infos.append(
                             (
                                 total_grad_magnitude,
-                                full_data.info_used_with_gradient_magnitudes,
+                                batch.info_used_with_gradient_magnitudes,
                                 loss.cpu().item(),
                                 total_normalized_grad_magnitude,
                             )
@@ -485,15 +466,15 @@ def train(
                         # todo i should run metrics on this
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-                        if full_data.gradient_multipliers is not None:
+                        if batch.gradient_multipliers is not None:
                             assert (
                                 aggregate_k_gradients == 1
                             ), "Scaling grads is only supported if you don't do grad acc."
                             assert all(
-                                full_data.gradient_multipliers.view(-1)[0]
-                                == full_data.gradient_multipliers.view(-1)[i]
+                                batch.gradient_multipliers.view(-1)[0]
+                                == batch.gradient_multipliers.view(-1)[i]
                                 for i in range(
-                                    full_data.gradient_multipliers.numel()
+                                    batch.gradient_multipliers.numel()
                                 )
                             ), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
                             # todo make print to see that this is actually running
@@ -501,9 +482,9 @@ def train(
                                 for w in model.parameters():
                                     w.grad = (
                                         w.grad
-                                        * full_data.gradient_multipliers.view(
-                                            -1
-                                        )[0]
+                                        * batch.gradient_multipliers.view(-1)[
+                                            0
+                                        ]
                                     )
 
                         if scaler:
@@ -560,18 +541,28 @@ def train(
                     print(e)
                     raise (e)
 
-            # total_loss, total_positional_losses, time_to_get_batch, forward_time, step_time, nan_share, ignore_share = get_metrics()
             if tqdm_iter:
                 tqdm_iter.set_postfix(
                     {
                         "data_time": time_to_get_batch,
                         "step_time": step_time,
-                        "mean_loss": total_loss / (batch + 1),
+                        "mean_loss": total_loss / (batch_index + 1),
                     }
                 )
 
             before_get_batch = time.time()
-        return get_metrics(), importance_sampling_infos
+        return EpochResult(
+            loss=total_loss / steps_per_epoch,
+            positional_losses=(
+                total_positional_losses / total_positional_losses_recorded
+            ).tolist(),
+            data_time=time_to_get_batch,
+            forward_time=forward_time,
+            step_time=step_time,
+            nan_share=nan_steps.cpu().item() / (batch_index + 1),
+            ignore_share=ignore_steps.cpu().item() / (batch_index + 1),
+            importance_sampling_infos=importance_sampling_infos,
+        )
 
     total_loss = float("inf")
     total_positional_losses = float("inf")
@@ -595,23 +586,11 @@ def train(
         for epoch in epoch_iterator:
             epoch_start_time = time.time()
             try:
-                # Pass accumulators to train_epoch or handle accumulation here
-                # Modifying train_epoch to accept/return these might be cleaner
-                # For now, let's assume train_epoch returns the epoch's totals
-                (
-                    (
-                        total_loss,
-                        total_positional_losses,
-                        time_to_get_batch,
-                        forward_time,
-                        step_time,
-                        nan_share,
-                        ignore_share,
-                    ),
-                    importance_sampling_infos,
-                ) = train_epoch()  # train_epoch needs to return the calculated positional losses for the epoch
+                epoch_result = train_epoch()
+                total_loss = epoch_result.loss
+                total_positional_losses = epoch_result.positional_losses
                 dl.importance_sampling_infos = (
-                    importance_sampling_infos  # Renamed attribute
+                    epoch_result.importance_sampling_infos
                 )
 
             except Exception as e:
@@ -628,11 +607,11 @@ def train(
             if verbose:
                 print("-" * 89)
                 print(
-                    f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {total_loss:5.2f} | "
-                    f"pos losses {','.join([f'{l:5.2f}' for l in total_positional_losses])}, lr {scheduler.get_last_lr()[0]}"
-                    f" data time {time_to_get_batch:5.2f} step time {step_time:5.2f}"
-                    f" forward time {forward_time:5.2f}"
-                    f" nan share {nan_share:5.2f} ignore share (for classification tasks) {ignore_share:5.4f}"
+                    f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {epoch_result.loss:5.2f} | "
+                    f"pos losses {','.join([f'{l:5.2f}' for l in epoch_result.positional_losses])}, lr {scheduler.get_last_lr()[0]}"
+                    f" data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f}"
+                    f" forward time {epoch_result.forward_time:5.2f}"
+                    f" nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f}"
                     + (
                         f"val score {val_score}"
                         if val_score is not None
@@ -650,29 +629,9 @@ def train(
 
             # Save model state dict after each epoch if path is provided (on rank 0)
             if train_state_dict_save_path is not None and rank == 0:
-                save_model = (
-                    model.module
-                    if isinstance(
-                        model, torch.nn.parallel.DistributedDataParallel
-                    )
-                    else model
+                save_checkpoint(
+                    model, optimizer, train_state_dict_save_path, epoch
                 )
-                print(
-                    f"Saving checkpoint to {train_state_dict_save_path} (epoch {epoch})"
-                )
-                os.makedirs(
-                    os.path.dirname(train_state_dict_save_path), exist_ok=True
-                )
-                try:
-                    # Save model state dict, optimizer state dict, and current epoch
-                    checkpoint = {
-                        "model_state_dict": save_model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "epoch": epoch,
-                    }
-                    torch.save(checkpoint, train_state_dict_save_path)
-                except Exception as e:
-                    print(f"Error saving checkpoint: {e}")
 
     except KeyboardInterrupt:
         print("Training interrupted by user.")
@@ -688,3 +647,49 @@ def train(
             model.to("cpu"),
             dl,
         ), {"total_time": time.time() - total_start_time}
+
+
+def load_checkpoint(
+    model, optimizer, scheduler, train_state_dict_load_path, device
+):
+    print(f"Loading checkpoint from {train_state_dict_load_path}")
+    try:
+        checkpoint = torch.load(
+            train_state_dict_load_path, map_location=device
+        )
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            # New format with model, optimizer state and epoch
+            model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            start_epoch = checkpoint["epoch"] + 1
+            print(f"Resuming from epoch {start_epoch}")
+            # Fast-forward the scheduler to the correct epoch
+            for _ in range(start_epoch - 1):
+                scheduler.step()
+        else:
+            raise ValueError(
+                f"Checkpoint does not contain 'model_state_dict' or 'optimizer_state_dict'. Checkpoint: {checkpoint}"
+            )
+    except Exception as e:
+        print(f"Error loading checkpoint: {e}")
+        raise e
+
+
+def save_checkpoint(model, optimizer, train_state_dict_save_path, epoch):
+    save_model = (
+        model.module
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else model
+    )
+    print(f"Saving checkpoint to {train_state_dict_save_path} (epoch {epoch})")
+    os.makedirs(os.path.dirname(train_state_dict_save_path), exist_ok=True)
+    try:
+        # Save model state dict, optimizer state dict, and current epoch
+        checkpoint = {
+            "model_state_dict": save_model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": epoch,
+        }
+        torch.save(checkpoint, train_state_dict_save_path)
+    except Exception as e:
+        print(f"Error saving checkpoint: {e}")

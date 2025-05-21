@@ -8,13 +8,12 @@ from functools import partial
 from typing import Any, ClassVar
 
 import torch
-from torch import nn
-from torch.nn.modules.transformer import Module, Tensor
 
 from pfns.model.layer_norm import LayerNorm
 from pfns.model.mlp import MLP
 from pfns.model.multi_head_attention import MultiHeadAttention
-
+from torch import nn
+from torch.nn.modules.transformer import Module, Tensor
 
 
 class PerFeatureLayer(Module):
@@ -50,7 +49,9 @@ class PerFeatureLayer(Module):
         attention_init_gain: float = 1.0,
         d_k: int | None = None,
         d_v: int | None = None,
-        precomputed_kv: None | torch.Tensor | tuple[torch.Tensor, torch.Tensor] = None,
+        precomputed_kv: None
+        | torch.Tensor
+        | tuple[torch.Tensor, torch.Tensor] = None,
     ) -> None:
         """
         Args:
@@ -85,7 +86,10 @@ class PerFeatureLayer(Module):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
         assert d_model % nhead == 0 or (d_k is not None and d_v is not None)
-        if multiquery_item_attention_for_test_set and multiquery_item_attention:
+        if (
+            multiquery_item_attention_for_test_set
+            and multiquery_item_attention
+        ):
             raise ValueError(
                 "Cannot use both multiquery_item_attention_for_test_set"
                 "and multiquery_item_attention",
@@ -259,9 +263,11 @@ class PerFeatureLayer(Module):
                 if single_eval_pos < x.shape[1]:
                     new_x_test = self.self_attn_between_items(
                         x[:, single_eval_pos:].transpose(1, 2),
-                        x[:, :single_eval_pos].transpose(1, 2)
-                        if single_eval_pos
-                        else None,
+                        (
+                            x[:, :single_eval_pos].transpose(1, 2)
+                            if single_eval_pos
+                            else None
+                        ),
                         save_peak_mem_factor=save_peak_mem_factor,
                         cache_kv=False,
                         add_input=True,
@@ -304,13 +310,16 @@ class PerFeatureLayer(Module):
                 cache_kv=cache_trainset_representation and single_eval_pos,
                 add_input=True,
                 allow_inplace=True,
-                use_cached_kv=cache_trainset_representation and not single_eval_pos,
+                use_cached_kv=cache_trainset_representation
+                and not single_eval_pos,
             ).transpose(1, 2)
 
         # the mlp tends to require 8 times more memory at its peak, that is why we use 8 here
         # todo: this depends on the hidden size, though, and should generally be a function of the hidden size
         mlp_save_peak_mem_factor = (
-            save_peak_mem_factor * 8 if save_peak_mem_factor is not None else None
+            save_peak_mem_factor * 8
+            if save_peak_mem_factor is not None
+            else None
         )
 
         sublayers = []
@@ -326,13 +335,17 @@ class PerFeatureLayer(Module):
             attn_between_items,
             partial(
                 self.mlp.__call__,
-                save_peak_mem_factor=mlp_save_peak_mem_factor
-                if (
-                    mlp_save_peak_mem_factor is not None
-                    and state.numel() // state.shape[-1] // mlp_save_peak_mem_factor
-                )
-                > 32
-                else None,
+                save_peak_mem_factor=(
+                    mlp_save_peak_mem_factor
+                    if (
+                        mlp_save_peak_mem_factor is not None
+                        and state.numel()
+                        // state.shape[-1]
+                        // mlp_save_peak_mem_factor
+                    )
+                    > 32
+                    else None
+                ),
                 add_input=True,
                 allow_inplace=True,
             ),

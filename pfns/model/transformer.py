@@ -10,15 +10,15 @@ import einops
 import networkx as nx
 import numpy as np
 import torch
-from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 from pfns.model.encoders import (
-    SequentialEncoder,
     get_linear_x_encoder,
     get_linear_y_encoder,
+    SequentialEncoder,
 )
 from pfns.model.layer import PerFeatureLayer
+from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 DEFAULT_EMSIZE = 128
 
@@ -46,12 +46,7 @@ class PerFeatureTransformer(nn.Module):
         nlayers: int = 10,
         y_encoder: nn.Module | None = None,
         decoder_dict: (
-            dict[str,
-                 tuple[
-                     Callable[[int, int, int], nn.Module] | None,
-                     int
-                     ]
-                ]
+            dict[str, tuple[Callable[[int, int, int], nn.Module] | None, int]]
             | None
         ) = None,
         activation: Literal["gelu", "relu"] = "gelu",
@@ -186,7 +181,6 @@ class PerFeatureTransformer(nn.Module):
             min_num_layers_layer_dropout=min_num_layers_layer_dropout,
         )
 
-
         initialized_decoder_dict = {}
         for decoder_key in decoder_dict:
             decoder_model, decoder_n_out = decoder_dict[decoder_key]
@@ -206,9 +200,13 @@ class PerFeatureTransformer(nn.Module):
 
         self.feature_positional_embedding = feature_positional_embedding
         if feature_positional_embedding == "learned":
-            self.feature_positional_embedding_embeddings = nn.Embedding(1_000, ninp)
+            self.feature_positional_embedding_embeddings = nn.Embedding(
+                1_000, ninp
+            )
         elif feature_positional_embedding == "subspace":
-            self.feature_positional_embedding_embeddings = nn.Linear(ninp // 4, ninp)
+            self.feature_positional_embedding_embeddings = nn.Linear(
+                ninp // 4, ninp
+            )
 
         self.cached_feature_positional_embeddings: torch.Tensor | None = None
         self.seed = seed if seed is not None else random.randint(0, 1_000_000)  # noqa: S311
@@ -217,9 +215,16 @@ class PerFeatureTransformer(nn.Module):
         if y_style_encoder is not None:
             assert attention_between_features, "Attention between features must be True when using a y_style_encoder, otherwise only use a style_encoder."
         self.y_style_encoder = y_style_encoder
-        
 
-    def forward(self, x: torch.Tensor | None, y: torch.Tensor | None, test_x: torch.Tensor | None = None, style: torch.Tensor | None = None, y_style: torch.Tensor | None = None, **kwargs) -> dict[str, torch.Tensor]:  # noqa: D417
+    def forward(
+        self,
+        x: torch.Tensor | None,
+        y: torch.Tensor | None,
+        test_x: torch.Tensor | None = None,
+        style: torch.Tensor | None = None,
+        y_style: torch.Tensor | None = None,
+        **kwargs,
+    ) -> dict[str, torch.Tensor]:  # noqa: D417
         """
         x can either contain both the train and test part, or the test part can be passed as test_x.
 
@@ -242,18 +247,31 @@ class PerFeatureTransformer(nn.Module):
         single_eval_pos = len(y) if y is not None else None
 
         if self.cache_trainset_representation and y is None:
-            assert (test_x is None) != (x is None), "Provide the test inputs only via test_x or x, not both, when cache_trainset_representation is True"
+            assert (
+                (test_x is None) != (x is None)
+            ), "Provide the test inputs only via test_x or x, not both, when cache_trainset_representation is True"
             if test_x is not None:
                 x = test_x
         else:
-            assert x is not None, "x must be provided when not predicting from cached trainset representations"
-            assert y is not None, "y must be provided when not predicting from cached trainset representations"
+            assert (
+                x is not None
+            ), "x must be provided when not predicting from cached trainset representations"
+            assert (
+                y is not None
+            ), "y must be provided when not predicting from cached trainset representations"
 
             if test_x is not None:
                 assert single_eval_pos == len(x)
                 x = torch.cat((x, test_x), dim=0)
-        
-        return self._forward(x, y, single_eval_pos=single_eval_pos, style=style, y_style=y_style, **kwargs)
+
+        return self._forward(
+            x,
+            y,
+            single_eval_pos=single_eval_pos,
+            style=style,
+            y_style=y_style,
+            **kwargs,
+        )
 
     def _forward(  # noqa: PLR0912, C901
         self,
@@ -272,7 +290,7 @@ class PerFeatureTransformer(nn.Module):
         Args:
             x: The input data. Shape: `(seq_len, batch_size, num_features)`. This can also be a dictionary of tensors,
                 the default being a tensor with key "main", but can be others depending on the encoder.
-            y: The target data. Shape: `(seq_len, batch_size, num_targets)` where num targets is typically 1. 
+            y: The target data. Shape: `(seq_len, batch_size, num_targets)` where num targets is typically 1.
                 In which case the last dimension can be omitted. Can be None if we perform predictions
                 for the test set using cached trainset representations. This can also be a dictionary of tensors,
                 the default being a tensor with key "main", but can be others depending on the y_encoder.
@@ -297,7 +315,9 @@ class PerFeatureTransformer(nn.Module):
 
         single_eval_pos_ = single_eval_pos or 0
         if isinstance(x, dict):
-            assert "main" in set(x.keys()), f"Main must be in input keys: {x.keys()}."
+            assert "main" in set(
+                x.keys()
+            ), f"Main must be in input keys: {x.keys()}."
         else:
             x = {"main": x}
         seq_len, batch_size, num_features = x["main"].shape
@@ -312,16 +332,19 @@ class PerFeatureTransformer(nn.Module):
             )
 
         if isinstance(y, dict):
-            assert "main" in set(y.keys()), f"Main must be in input keys: {y.keys()}."
+            assert "main" in set(
+                y.keys()
+            ), f"Main must be in input keys: {y.keys()}."
         else:
             y = {"main": y}
-        
+
         for k in x:
             num_features_ = x[k].shape[2]
 
             # pad to multiple of features_per_group
             missing_to_next = (
-                self.features_per_group - (num_features_ % self.features_per_group)
+                self.features_per_group
+                - (num_features_ % self.features_per_group)
             ) % self.features_per_group
 
             if missing_to_next > 0:
@@ -342,7 +365,13 @@ class PerFeatureTransformer(nn.Module):
                     style = torch.cat(
                         (
                             style,
-                            torch.zeros(batch_size, missing_to_next, style.shape[2], device=style.device, dtype=style.dtype),
+                            torch.zeros(
+                                batch_size,
+                                missing_to_next,
+                                style.shape[2],
+                                device=style.device,
+                                dtype=style.dtype,
+                            ),
                         ),
                         dim=-2,
                     )
@@ -359,11 +388,15 @@ class PerFeatureTransformer(nn.Module):
             # Split up the style, if it is provided
             # and has a feature dimension
             if style.ndim == 3:
-                batched_style = einops.rearrange(style, "b (f n) s -> (b f) n s", n=self.features_per_group)  # s represents the style dimension
+                batched_style = einops.rearrange(
+                    style, "b (f n) s -> (b f) n s", n=self.features_per_group
+                )  # s represents the style dimension
             else:
                 assert style.ndim == 2
-                batched_style = einops.repeat(style, "b s -> (b f) s", f=num_features)  # b s -> (b f) s
-        
+                batched_style = einops.repeat(
+                    style, "b s -> (b f) s", f=num_features
+                )  # b s -> (b f) s
+
         # We have to re-work categoricals based on the subgroup they fall into.
         categorical_inds_to_use: list[list[int]] | None = None
         if categorical_inds is not None:
@@ -461,7 +494,8 @@ class PerFeatureTransformer(nn.Module):
             num_features=num_features,
             seq_len=seq_len,
             cache_embeddings=(
-                self.cache_trainset_representation and single_eval_pos is not None
+                self.cache_trainset_representation
+                and single_eval_pos is not None
             ),
             use_cached_embeddings=(
                 self.cache_trainset_representation and single_eval_pos is None
@@ -470,35 +504,62 @@ class PerFeatureTransformer(nn.Module):
 
         if self.attention_between_features:
             # b s f e + b s 1 e -> b s f+1 e
-            embedded_input = torch.cat((embedded_x, embedded_y.unsqueeze(2)), dim=2)
+            embedded_input = torch.cat(
+                (embedded_x, embedded_y.unsqueeze(2)), dim=2
+            )
         else:
             # add them together in this case, like for the original PFNs
             # b s 1 e + b s 1 e -> b s 1 e
             embedded_input = embedded_x + embedded_y.unsqueeze(2)
 
         if style is not None:
-            embedded_style = self.style_encoder(batched_style) # (batch num_groups) style_dim | (batch num_groups) num_features style_dim -> (batch num_groups) emsize
-            embedded_style = einops.rearrange(embedded_style, "(b f) e -> b 1 f e", b=batch_size)  # (batch num_groups) emsize -> batch 1 num_groups emsize
+            embedded_style = self.style_encoder(
+                batched_style
+            )  # (batch num_groups) style_dim | (batch num_groups) num_features style_dim -> (batch num_groups) emsize
+            embedded_style = einops.rearrange(
+                embedded_style, "(b f) e -> b 1 f e", b=batch_size
+            )  # (batch num_groups) emsize -> batch 1 num_groups emsize
         else:
             embedded_style = None
 
         if y_style is not None:
-            embedded_y_style = self.y_style_encoder(y_style) # batch style_dim -> batch emsize
-            embedded_y_style = einops.rearrange(embedded_y_style, "b e -> b 1 1 e")  # batch emsize -> batch 1 1 emsize
+            embedded_y_style = self.y_style_encoder(
+                y_style
+            )  # batch style_dim -> batch emsize
+            embedded_y_style = einops.rearrange(
+                embedded_y_style, "b e -> b 1 1 e"
+            )  # batch emsize -> batch 1 1 emsize
         else:
             embedded_y_style = None
-        
 
         if embedded_style is not None or embedded_y_style is not None:
             if embedded_style is None:
-                embedded_style = torch.zeros(batch_size, 1, num_features, embedded_input.shape[3], device=embedded_input.device, dtype=embedded_input.dtype)
-            
+                embedded_style = torch.zeros(
+                    batch_size,
+                    1,
+                    num_features,
+                    embedded_input.shape[3],
+                    device=embedded_input.device,
+                    dtype=embedded_input.dtype,
+                )
+
             if embedded_y_style is None:
-                embedded_y_style = torch.zeros(batch_size, 1, 1, embedded_input.shape[3], device=embedded_input.device, dtype=embedded_input.dtype)
-            
-            full_embedded_style = torch.cat((embedded_style, embedded_y_style), dim=2)
-            
-            embedded_input = torch.cat((full_embedded_style, embedded_input), dim=1)
+                embedded_y_style = torch.zeros(
+                    batch_size,
+                    1,
+                    1,
+                    embedded_input.shape[3],
+                    device=embedded_input.device,
+                    dtype=embedded_input.dtype,
+                )
+
+            full_embedded_style = torch.cat(
+                (embedded_style, embedded_y_style), dim=2
+            )
+
+            embedded_input = torch.cat(
+                (full_embedded_style, embedded_input), dim=1
+            )
             single_eval_pos_ += 1  # we added a style embedding
 
         if torch.isnan(embedded_input).any():
@@ -520,7 +581,9 @@ class PerFeatureTransformer(nn.Module):
         del embedded_input
 
         # out: s b e
-        test_encoder_out = encoder_out[:, single_eval_pos_:, -1].transpose(0, 1)
+        test_encoder_out = encoder_out[:, single_eval_pos_:, -1].transpose(
+            0, 1
+        )
 
         if only_return_standard_out:
             assert self.decoder_dict is not None
@@ -533,7 +596,9 @@ class PerFeatureTransformer(nn.Module):
             )
 
             # out: s b e
-            train_encoder_out = encoder_out[:, :single_eval_pos_, -1].transpose(0, 1)
+            train_encoder_out = encoder_out[
+                :, :single_eval_pos_, -1
+            ].transpose(0, 1)
             output_decoded["train_embeddings"] = train_encoder_out
             output_decoded["test_embeddings"] = test_encoder_out
 
@@ -593,7 +658,9 @@ class PerFeatureTransformer(nn.Module):
             elif self.feature_positional_embedding is None:
                 embs = None
             else:
-                raise ValueError(f"Unknown {self.feature_positional_embedding=}")
+                raise ValueError(
+                    f"Unknown {self.feature_positional_embedding=}"
+                )
 
         self.cached_embeddings = None
         if cache_embeddings and embs is not None:
@@ -604,7 +671,7 @@ class PerFeatureTransformer(nn.Module):
     def empty_trainset_representation_cache(self) -> None:
         for layer in self.transformer_layers.layers:
             layer.empty_trainset_representation_cache()
-    
+
     def reset_save_peak_mem_factor(self, factor: int | None = None) -> None:
         """Sets the save_peak_mem_factor for all layers.
 
@@ -635,10 +702,11 @@ class PerFeatureTransformer(nn.Module):
 
 ### Utility functions
 
+
 class LayerStack(nn.Module):
     """Same as nn.Sequential, but with support for passing keyword arguments
     to layers and stacks the same layer multiple times, which is passed as creater function.
-    
+
     This is used as transformer encoder and decoder.
     """
 
@@ -660,7 +728,9 @@ class LayerStack(nn.Module):
                 layers randomly during training up to this number.
         """
         super().__init__()
-        self.layers = nn.ModuleList([layer_creator() for _ in range(num_layers)])
+        self.layers = nn.ModuleList(
+            [layer_creator() for _ in range(num_layers)]
+        )
         self.num_layers = num_layers
         self.min_num_layers_layer_dropout = (
             min_num_layers_layer_dropout
@@ -690,7 +760,9 @@ class LayerStack(nn.Module):
 
         for layer in self.layers[:n_layers]:
             if self.recompute_each_layer and x.requires_grad:
-                x = checkpoint(partial(layer, **kwargs), x, use_reentrant=False)  # type: ignore
+                x = checkpoint(
+                    partial(layer, **kwargs), x, use_reentrant=False
+                )  # type: ignore
             else:
                 x = layer(x, **kwargs)
 
@@ -699,8 +771,11 @@ class LayerStack(nn.Module):
 
 ### Utility functions
 
+
 @contextmanager
-def isolate_torch_rng(seed: int, device: torch.device) -> Generator[None, None, None]:
+def isolate_torch_rng(
+    seed: int, device: torch.device
+) -> Generator[None, None, None]:
     """
     Use the specified seed within the context manager (`with isolate_torch_rng(...)`)
     and return to the original state after the context manager exits.

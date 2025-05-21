@@ -11,11 +11,12 @@ from torch import nn
 
 ### Simple Encoders
 
+
 def get_linear_y_encoder(emsize):
     return SequentialEncoder(
         NanHandlingEncoderStep(),
         LinearInputEncoderStep(
-            num_features=2, # 2 for the value and the nan indicator
+            num_features=2,  # 2 for the value and the nan indicator
             emsize=emsize,
             out_keys=("output",),
             in_keys=("main", "nan_indicators"),
@@ -38,14 +39,17 @@ def get_linear_x_encoder(emsize, features_per_group=1):
 ### Custom Encoders
 ### These encoders are meant to be used for both x and y
 
+
 class SequentialEncoder(nn.Sequential):
     """Our Encoder class, which applies a sequence of encoder steps.
-    
+
     Each step accepts a set of inputs, specified by `in_keys`, and outputs a set of outputs, specified by `out_keys`.
     The steps are worked off one after another, writing back the results into a dict.
     """
 
-    def __init__(self, *args: SeqEncStep, output_key: str = "output", **kwargs: Any):
+    def __init__(
+        self, *args: SeqEncStep, output_key: str = "output", **kwargs: Any
+    ):
         """Initialize the SequentialEncoder.
 
         Args:
@@ -58,7 +62,9 @@ class SequentialEncoder(nn.Sequential):
         super().__init__(*args, **kwargs)
         self.output_key = output_key
 
-    def forward(self, input: dict[str, torch.Tensor] | torch.Tensor, **kwargs: Any) -> torch.Tensor:
+    def forward(
+        self, input: dict[str, torch.Tensor] | torch.Tensor, **kwargs: Any
+    ) -> torch.Tensor:
         """Apply the sequence of encoder steps to the input.
 
         Args:
@@ -73,7 +79,9 @@ class SequentialEncoder(nn.Sequential):
         """
         # If the input is not a dict, we assume it is the main input and wrap it in a dict
         if not isinstance(input, dict):
-            assert len(self[0].in_keys) == 1 and self[0].in_keys[0] == "main", "The first encoder step must expect a single input key 'main', if the input is not a dict"
+            assert (
+                len(self[0].in_keys) == 1 and self[0].in_keys[0] == "main"
+            ), "The first encoder step must expect a single input key 'main', if the input is not a dict"
             input = {"main": input}
 
         for module in self:
@@ -191,7 +199,9 @@ class SeqEncStep(nn.Module):
 
         assert isinstance(out, tuple)
         assert len(out) == len(self.out_keys)
-        state.update({out_key: out[i] for i, out_key in enumerate(self.out_keys)})
+        state.update(
+            {out_key: out[i] for i, out_key in enumerate(self.out_keys)}
+        )
         return state
 
 
@@ -226,7 +236,9 @@ class LinearInputEncoderStep(SeqEncStep):
         """Fit the encoder step. Does nothing for LinearInputEncoderStep."""
         pass
 
-    def _transform(self, *x: torch.Tensor, **kwargs: Any) -> tuple[torch.Tensor]:
+    def _transform(
+        self, *x: torch.Tensor, **kwargs: Any
+    ) -> tuple[torch.Tensor]:
         """Apply the linear transformation to the input.
 
         Args:
@@ -246,6 +258,7 @@ class ConstantNormalizationInputEncoderStep(SeqEncStep):
     """
     An encoder step that subtracts all inputs by a constant mean and divides by a constant standard deviation.
     """
+
     def __init__(
         self,
         *,
@@ -265,14 +278,16 @@ class ConstantNormalizationInputEncoderStep(SeqEncStep):
     def _transform(self, *x: torch.Tensor, **kwargs: Any):
         assert len(x) == 1
         x = x[0]
-        return ((x-self.mean)/self.std,)
+        return ((x - self.mean) / self.std,)
 
 
-class SqueezeBetween0and1(nn.Module): # take care of test set here
+class SqueezeBetween0and1(nn.Module):  # take care of test set here
     def forward(self, x):
         width = x.max(0).values - x.min(0).values
         result = (x - x.min(0).values) / width
-        result[(width == 0)[None].repeat(len(x),*[1]*(len(x.shape)-1))] = .5
+        result[
+            (width == 0)[None].repeat(len(x), *[1] * (len(x.shape) - 1))
+        ] = 0.5
         return result
 
 
@@ -284,7 +299,9 @@ def get_normalized_uniform_encoder(encoder_creator):
     :param encoder:
     :return:
     """
-    return lambda in_dim, out_dim: nn.Sequential(Normalize(.5, math.sqrt(1/12)), encoder_creator(in_dim, out_dim))
+    return lambda in_dim, out_dim: nn.Sequential(
+        Normalize(0.5, math.sqrt(1 / 12)), encoder_creator(in_dim, out_dim)
+    )
 
 
 class NanHandlingEncoderStep(SeqEncStep):
@@ -307,12 +324,18 @@ class NanHandlingEncoderStep(SeqEncStep):
             in_keys: The keys of the input tensors. Must be a single key.
             out_keys: The keys to assign the output tensors to.
         """
-        assert len(in_keys) == 1, "NanHandlingEncoderStep expects a single input key"
+        assert (
+            len(in_keys) == 1
+        ), "NanHandlingEncoderStep expects a single input key"
         super().__init__(in_keys, out_keys)
         self.keep_nans = keep_nans
-        self.register_buffer("feature_means_", torch.tensor([]), persistent=False)
+        self.register_buffer(
+            "feature_means_", torch.tensor([]), persistent=False
+        )
 
-    def _fit(self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any) -> None:
+    def _fit(
+        self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any
+    ) -> None:
         """Compute the feature means on the training set for replacing NaNs.
 
         Args:
@@ -397,7 +420,9 @@ class VariableNumFeaturesEncoderStep(SeqEncStep):
             min=1,
         ).cpu()
 
-    def _transform(self, x: torch.Tensor, **kwargs: Any) -> tuple[torch.Tensor]:
+    def _transform(
+        self, x: torch.Tensor, **kwargs: Any
+    ) -> tuple[torch.Tensor]:
         """Transform the input tensor to have a fixed number of features.
 
         Args:
@@ -419,10 +444,14 @@ class VariableNumFeaturesEncoderStep(SeqEncStep):
             if self.normalize_by_sqrt:
                 # Verified that this gives indeed unit variance with appended zeros
                 x = x * torch.sqrt(
-                    self.num_features / self.number_of_used_features_.to(x.device),
+                    self.num_features
+                    / self.number_of_used_features_.to(x.device),
                 )
             else:
-                x = x * (self.num_features / self.number_of_used_features_.to(x.device))
+                x = x * (
+                    self.num_features
+                    / self.number_of_used_features_.to(x.device)
+                )
 
         zeros_appended = torch.zeros(
             *x.shape[:-1],
@@ -478,7 +507,9 @@ class InputNormalizationEncoderStep(SeqEncStep):
     def reset_seed(self) -> None:
         """Reset the random seed."""
 
-    def _fit(self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any) -> None:
+    def _fit(
+        self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any
+    ) -> None:
         """Compute the normalization statistics on the training set.
 
         Args:
@@ -486,7 +517,9 @@ class InputNormalizationEncoderStep(SeqEncStep):
             single_eval_pos: The position to use for single evaluation.
             **kwargs: Additional keyword arguments (unused).
         """
-        normalize_position = single_eval_pos if self.normalize_on_train_only else -1
+        normalize_position = (
+            single_eval_pos if self.normalize_on_train_only else -1
+        )
         if self.remove_outliers and not self.normalize_to_ranking:
             (
                 x,
@@ -529,7 +562,9 @@ class InputNormalizationEncoderStep(SeqEncStep):
         Returns:
             A tuple containing the normalized tensor.
         """
-        normalize_position = single_eval_pos if self.normalize_on_train_only else -1
+        normalize_position = (
+            single_eval_pos if self.normalize_on_train_only else -1
+        )
 
         if self.normalize_to_ranking:
             raise AssertionError(
@@ -561,10 +596,8 @@ class InputNormalizationEncoderStep(SeqEncStep):
         return (x,)
 
 
-
-
-
 ### Helper functions
+
 
 # usage of custom implementations is required to support ONNX export
 def torch_nansum(x: torch.Tensor, axis=None, keepdim=False, dtype=None):
@@ -588,7 +621,9 @@ def torch_nanmean(
     if include_inf:
         nan_mask = torch.logical_or(nan_mask, torch.isinf(x))
 
-    num = torch.where(nan_mask, torch.full_like(x, 0), torch.full_like(x, 1)).sum(  # type: ignore
+    num = torch.where(
+        nan_mask, torch.full_like(x, 0), torch.full_like(x, 1)
+    ).sum(  # type: ignore
         axis=axis,
     )
     value = torch.where(nan_mask, torch.full_like(x, 0), x).sum(axis=axis)  # type: ignore
@@ -598,10 +633,14 @@ def torch_nanmean(
 
 
 def torch_nanstd(x: torch.Tensor, axis: int = 0):
-    num = torch.where(torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)).sum(  # type: ignore
+    num = torch.where(
+        torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)
+    ).sum(  # type: ignore
         axis=axis,
     )
-    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(axis=axis)  # type: ignore
+    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(
+        axis=axis
+    )  # type: ignore
     mean = value / num
     mean_broadcast = torch.repeat_interleave(
         mean.unsqueeze(axis),
@@ -708,18 +747,25 @@ def remove_outliers(
     upper: None | torch.Tensor = None,
 ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
     # Expects T, B, H
-    assert (lower is None) == (upper is None), "Either both or none of lower and upper"
+    assert (lower is None) == (
+        upper is None
+    ), "Either both or none of lower and upper"
     assert len(X.shape) == 3, "X must be T,B,H"
     # for b in range(X.shape[1]):
     # for col in range(X.shape[2]):
     if lower is None:
         data = X if normalize_positions == -1 else X[:normalize_positions]
         data_clean = data[:].clone()
-        data_mean, data_std = torch_nanmean(data, axis=0), torch_nanstd(data, axis=0)
+        data_mean, data_std = (
+            torch_nanmean(data, axis=0),
+            torch_nanstd(data, axis=0),
+        )
         cut_off = data_std * n_sigma
         lower, upper = data_mean - cut_off, data_mean + cut_off
 
-        data_clean[torch.logical_or(data_clean > upper, data_clean < lower)] = np.nan
+        data_clean[
+            torch.logical_or(data_clean > upper, data_clean < lower)
+        ] = np.nan
         data_mean, data_std = (
             torch_nanmean(data_clean, axis=0),
             torch_nanstd(data_clean, axis=0),

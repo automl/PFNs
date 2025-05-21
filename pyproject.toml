@@ -27,6 +27,12 @@ dependencies=[
         'botorch>=0.7.2',
         'matplotlib>=3.10.1',
         'einops>=0.8.1',
+        'pre-commit>=3.5.0',
+        'black==24.4.2',
+        'usort==1.0.8.post1',
+        'ruff-api==0.1.0',
+        'stdlibs==2024.1.28',
+        'pytest>=5.4.3',
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -46,3 +52,12 @@ exclude = [
 
 [project.urls]
 "Homepage" = "https://github.com/automl/PFNs4BO"
+
+[tool.usort]
+first_party_detection = false
+
+[tool.ufmt]
+formatter = "ruff-api"
+
+[tool.black]
+line-length = 79

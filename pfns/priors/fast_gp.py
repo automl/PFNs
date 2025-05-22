@@ -136,9 +136,9 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
 
                     d = model(x)
                     if observation_noise:
-                        target_sample = sample = likelihood(d).sample().transpose(0, 1)
+                        target_sample = sample = likelihood(d).sample()
                     else:
-                        target_sample = d.sample().transpose(0, 1)  # this will be the target for the loss
+                        target_sample = d.sample()
                         sample = likelihood(target_sample).sample()  # this will be the input to the Transformer
                     successful_sample = True
             except RuntimeError: # This can happen when torch.linalg.eigh fails. Restart with new init resolves this.
@@ -152,11 +152,10 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
 
     if hyperparameters.get('improvement_classification', False):
         single_eval_pos = kwargs['single_eval_pos']
-        max_so_far = sample[:single_eval_pos].max(0).values
-        sample[single_eval_pos:] = (sample > max_so_far).float()[single_eval_pos:]
+        max_so_far = sample[:, :single_eval_pos].max(0).values
+        sample[:, single_eval_pos:] = (sample[:, single_eval_pos:] > max_so_far).float()[:, single_eval_pos:]
 
-    return Batch(x=x.transpose(0, 1), y=sample, target_y=target_sample)
-
+    return Batch(x=x, y=sample, target_y=target_sample, batch_first=True)
 
 def get_model_on_device(x,y,hyperparameters,device):
     model, likelihood = get_model(x, y, hyperparameters)

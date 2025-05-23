@@ -9,14 +9,34 @@ which is the loss used for training.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Any, List, TYPE_CHECKING
 
 import torch
+
+from pfns import base_config
 from torch import nn
 from typing_extensions import override
 
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
+
+
+@dataclass(frozen=True)
+class BarDistributionConfig(base_config.BaseConfig):
+    borders: List[float]
+    ignore_nan_targets: bool = True
+    full_support: bool = False
+
+    def get_criterion(self):
+        kwargs = {
+            "borders": torch.tensor(self.borders),
+            "ignore_nan_targets": self.ignore_nan_targets,
+        }
+        if self.full_support:
+            return FullSupportBarDistribution(**kwargs)
+        else:
+            return BarDistribution(**kwargs)
 
 
 class BarDistribution(nn.Module):

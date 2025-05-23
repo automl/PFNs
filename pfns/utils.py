@@ -114,29 +114,6 @@ def get_openai_lr(transformer_model):
     return 0.003239 - 0.0001395 * math.log(num_params)
 
 
-def get_weighted_single_eval_pos_sampler(max_len, min_len=0, p=1.0):
-    """
-    This gives a sampler that can be used for `single_eval_pos` which yields good performance for all positions p,
-    where p <= `max_len`. At most `max_len` - 1 examples are shown to the Transformer.
-    :return: Sampler that can be fed to `train()` as `single_eval_pos_gen`.
-    """
-    return lambda: random.choices(
-        range(min_len, max_len),
-        [
-            1 / math.pow(((max_len - min_len) - i), p)
-            for i in range(max_len - min_len)
-        ],
-    )[0]
-
-
-def get_uniform_single_eval_pos_sampler(max_len, min_len=0):
-    """
-    Just sample any evaluation position with the same weight
-    :return: Sampler that can be fed to `train()` as `single_eval_pos_gen`.
-    """
-    return lambda: random.choices(range(min_len, max_len))[0]
-
-
 class SeqBN(nn.Module):
     def __init__(self, d_model):
         super().__init__()
@@ -348,7 +325,9 @@ def init_dist(device):
         return True, rank, f"cuda:{rank}"
     elif "SLURM_PROCID" in os.environ and torch.cuda.device_count() > 1:
         # this is for multi gpu when starting with submitit
-        assert device != "cpu:0"
+        assert not device.startswith(
+            "cpu"
+        ), "Cannot use CPU for distributed training with SLURM"
         rank = int(os.environ["SLURM_PROCID"])
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = "12355"

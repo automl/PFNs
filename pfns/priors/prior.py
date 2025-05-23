@@ -1,9 +1,44 @@
+import importlib
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, fields
-from typing import Optional, Set
+from functools import partial
+from typing import Callable, ClassVar, Optional, Set
 
 import torch
+
+from pfns.base_config import BaseConfig
 from torch.utils.data import DataLoader
+
+
+class PriorConfig(BaseConfig, metaclass=ABCMeta):
+    @abstractmethod
+    def create_get_batch_method(self) -> Callable:
+        pass
+
+
+@dataclass(frozen=True)
+class AdhocPriorConfig(PriorConfig):
+    # Set as a class variable instead of being set at init
+    prior_name: str | None = None
+    get_batch_method: Callable | None = None
+    prior_kwargs: dict | None = None
+
+    strict_field_types: ClassVar[bool] = False
+
+    def create_get_batch_method(self) -> Callable:
+        assert (
+            (self.prior_name is None) != (self.get_batch_method is None)
+        ), f"Either prior_name or get_batch_method must be provided, got prior_name={self.prior_name} and get_batch_method={self.get_batch_method}"
+
+        if self.prior_name is not None:
+            prior_module = importlib.import_module(
+                f"pfns.priors.{self.prior_name}"
+            )
+            get_batch = getattr(prior_module, "get_batch")
+        else:
+            get_batch = self.get_batch_method
+
+        return partial(get_batch, **self.prior_kwargs)
 
 
 @dataclass
@@ -23,10 +58,6 @@ class Batch:
     x: torch.Tensor
     y: torch.Tensor
     target_y: torch.Tensor
-
-    # This needs to be true, but you also need to make sure the batch dimension comes first
-    # That means the shape of x is (batch_size, seq_len, num_features)
-    batch_first: bool = False
 
     # Optional Batch Entries
     style: Optional[torch.Tensor] = None
@@ -91,43 +122,6 @@ def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
         **{
             f: merge_funcs[f]([getattr(batch, f) for batch in batches])
             for f in not_none_fields
-        }
-    )
-
-
-def merge_batches(*batches, ignore_attributes=[]):
-    assert (
-        False
-    ), "TODO: isn't this broken!? because catting in dim 0 seems wrong!?"
-
-    def merge_attribute(attr_name, batch_sizes):
-        attr = [getattr(batch, attr_name) for batch in batches]
-        if type(attr[0]) is list:
-
-            def make_list(sublist, i):
-                if sublist is None:
-                    return [None for _ in range(batch_sizes[i])]
-                return sublist
-
-            return sum(
-                [make_list(sublist, i) for i, sublist in enumerate(attr)], []
-            )
-        elif type(attr[0]) is torch.Tensor:
-            return torch.cat(attr, 0)
-        else:
-            assert all(a is None for a in attr), (
-                f"Unknown type encountered in `merge_batches`."
-                f"To ignore this, please add `{attr}` to the `ignore_attributes`."
-                f"The following values are the problem: {attr_name}."
-            )
-            return None
-
-    batch_sizes = [batch.x.shape[0] for batch in batches]
-    return Batch(
-        **{
-            f.name: merge_attribute(f.name, batch_sizes)
-            for f in fields(batches[0])
-            if f.name not in ignore_attributes
         }
     )
 

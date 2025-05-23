@@ -1,33 +1,158 @@
 from __future__ import annotations
 
+import importlib
+
 import itertools
 import os
 import time
 import typing as tp
 from contextlib import nullcontext
+from dataclasses import dataclass
 
 import einops
 import torch
-import yaml
 from pfns.model import transformer
 from pfns.model.bar_distribution import BarDistribution
+from pfns.model.criterions import BarDistributionConfig, CrossEntropyConfig
 from torch import nn
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
-from . import priors, utils
-from .priors import prior
+from . import base_config, utils
+from .priors import prior, utils as priors_utils
+from .priors.batch_shape_samplers import BatchShapeSamplerConfig
 from .utils import get_cosine_schedule_with_warmup, init_dist
 
 
-class Losses:
-    gaussian = nn.GaussianNLLLoss(full=True, reduction="none")
-    mse = nn.MSELoss(reduction="none")
-    ce = lambda num_classes: nn.CrossEntropyLoss(
-        reduction="none", weight=torch.ones(num_classes)
-    )
-    bce = nn.BCEWithLogitsLoss(reduction="none")
-    get_BarDistribution = BarDistribution
+@dataclass(frozen=True)
+class OptimizerConfig(base_config.BaseConfig):
+    optimizer: str
+    lr: float | None
+    weight_decay: float = 0.0
+
+    def create_optimizer(self, model_parameters):
+        if self.optimizer == "adam":
+            return torch.optim.Adam(
+                model_parameters, lr=self.lr, weight_decay=self.weight_decay
+            )
+        elif self.optimizer == "adamw":
+            return torch.optim.AdamW(
+                model_parameters, lr=self.lr, weight_decay=self.weight_decay
+            )
+        else:
+            raise ValueError(f"Optimizer {self.optimizer} not supported")
+
+
+@dataclass(frozen=True)
+class PerFeatureTransformerConfig(base_config.BaseConfig):
+    # encoder_generator: tp.Optional[str] = None # todo add back in as config, currently only supporting standard encoder
+    # y_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently only supporting standard encoder
+    # style_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently not supported
+    # y_style_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently not supported
+    criterion: CrossEntropyConfig | BarDistributionConfig
+    decoder_dict: tp.Dict[str, base_config.BaseTypes] | None = None
+    emsize: int = 200
+    nhid: int = 200
+    nlayers: int = 6
+    nhead: int = 2
+    features_per_group: int = 1
+    attention_between_features: bool = True
+    model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
+
+    def create_model(self):
+        encoder_generator = None
+        y_encoder_generator = None
+        style_encoder_generator = None
+        y_style_encoder_generator = None
+
+        # Resolve criterion
+        criterion = self.criterion.get_criterion()
+
+        # Determine n_out based on the resolved criterion
+        if isinstance(criterion, BarDistribution):
+            n_out = criterion.num_bars
+        elif isinstance(criterion, nn.CrossEntropyLoss):
+            n_out = criterion.weight.shape[0]
+        else:
+            raise ValueError(f"Criterion {criterion} not supported")
+
+        decoder_dict = (
+            self.decoder_dict
+            if self.decoder_dict
+            else {"standard": (None, n_out)}
+        )
+
+        encoder = (
+            encoder_generator(self.features_per_group, self.emsize)
+            if encoder_generator
+            else None
+        )
+        y_encoder = (
+            y_encoder_generator(1, self.emsize)
+            if y_encoder_generator
+            else None
+        )
+        model = transformer.TableTransformer(
+            encoder=encoder,
+            y_encoder=y_encoder,
+            features_per_group=self.features_per_group,
+            decoder_dict=decoder_dict,
+            ninp=self.emsize,
+            nhid=self.nhid,
+            nlayers=self.nlayers,
+            nhead=self.nhead,
+            attention_between_features=self.attention_between_features,
+            style_encoder=(
+                style_encoder_generator(self.features_per_group, self.emsize)
+                if style_encoder_generator is not None
+                else None
+            ),
+            y_style_encoder=(
+                y_style_encoder_generator(self.emsize)
+                if y_style_encoder_generator is not None
+                else None
+            ),
+            batch_first=True,  # model is batch_first by default now
+            **(self.model_extra_args or {}),
+        )
+        model.criterion = criterion
+        return model
+
+
+@dataclass(frozen=True)
+class MainConfig(base_config.BaseConfig):
+    # Training configuration
+    priors: tp.List[prior.PriorConfig]
+    optimizer: OptimizerConfig
+
+    # Model (includes criterion)
+    model: PerFeatureTransformerConfig
+
+    # Training
+    batch_shape_sampler: BatchShapeSamplerConfig
+    epochs: int = 10
+    steps_per_epoch: int = 100
+    batch_size: int = 200
+    aggregate_k_gradients: int = 1
+    n_targets_per_input: int = 1
+    train_mixed_precision: bool = True
+
+    # LR Scheduler
+    scheduler: str = "cosine_decay"
+    warmup_epochs: int = 10
+
+    # Checkpointing
+    train_state_dict_save_path: tp.Optional[str] = None
+    train_state_dict_load_path: tp.Optional[str] = None
+
+    # Logging
+    validation_period: int = 10
+    verbose: bool = True
+    progress_bar: bool = False
+
+    # Data loading
+    dataloader_class: str | None = None
+    num_workers: tp.Optional[int] = None
 
 
 class EpochResult(tp.NamedTuple):
@@ -41,133 +166,81 @@ class EpochResult(tp.NamedTuple):
     importance_sampling_infos: list  # gradient magnitude info
 
 
-def train(
-    get_batch_method: prior.PriorDataLoader | callable,
-    criterion,
-    encoder_generator=None,
-    emsize=200,
-    nhid=200,
-    nlayers=6,
-    nhead=2,
-    epochs=10,
-    steps_per_epoch=100,
-    batch_size=200,
-    seq_len=10,
-    lr=None,
-    weight_decay=0.0,
-    warmup_epochs=10,
-    train_state_dict_save_path=None,
-    train_state_dict_load_path=None,
-    y_encoder_generator=None,
-    decoder_dict={},
-    extra_prior_kwargs_dict={},
-    scheduler=get_cosine_schedule_with_warmup,
-    load_weights_from_this_state_dict=None,
-    validation_period=10,
-    single_eval_pos_gen=None,
-    gpu_device="cuda:0",
-    aggregate_k_gradients=1,
-    verbose=True,
-    style_encoder_generator=None,
-    y_style_encoder_generator=None,
-    epoch_callback=None,
-    step_callback=None,
-    continue_model=None,
-    features_per_group=-1,
-    train_mixed_precision=True,
-    progress_bar=False,
-    n_targets_per_input=1,
-    dataloader_class=priors.utils.StandardDataLoader,
-    num_workers=None,
-    **model_extra_args,
-):
+def train(c: MainConfig, device: str | None = None):
+    # Arguments from original signature not in MainConfig are set to defaults here
+    load_weights_from_this_state_dict = None
+    epoch_callback = None
+    step_callback = None
+    continue_model = None
+
     total_start_time = time.time()
-    device: str = gpu_device if torch.cuda.is_available() else "cpu:0"
-    print(f"Using {device} device")
+
+    default_device: str = "cuda:0" if torch.cuda.is_available() else "cpu:0"
+    if device is None:
+        device = default_device
+    print(f"Found default device {device}.")
     using_dist, rank, device = init_dist(device)
-    single_eval_pos_gen = (
-        single_eval_pos_gen
-        if callable(single_eval_pos_gen)
-        else lambda: single_eval_pos_gen
-    )
 
-    def eval_pos_seq_len_sampler():
-        single_eval_pos = single_eval_pos_gen()
-        return single_eval_pos, seq_len
+    # Resolve single_eval_pos_gen, todo make ready for multi gpu by including step info
+    eval_pos_seq_len_sampler = c.batch_shape_sampler.get_sampler()
+    print(eval_pos_seq_len_sampler)
 
-    if num_workers is not None:
-        extra_prior_kwargs_dict["num_workers"] = num_workers
-
-    dl = dataloader_class(
-        get_batch_method=get_batch_method,
-        num_steps=steps_per_epoch,
-        batch_size=batch_size,
-        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
-        seq_len_maximum=seq_len,
-        device=device,
-        n_targets_per_input=n_targets_per_input,
-        **extra_prior_kwargs_dict,
-    )
-
-    if isinstance(criterion, nn.GaussianNLLLoss):
-        n_out = 2
-    elif (
-        isinstance(criterion, BarDistribution)
-        or "BarDistribution" in criterion.__class__.__name__
-    ):  # TODO remove this fix (only for dev)
-        n_out = criterion.num_bars
-    elif isinstance(criterion, nn.CrossEntropyLoss):
-        n_out = criterion.weight.shape[0]
+    # Resolve dataloader_class string to actual class
+    if c.dataloader_class is None:
+        actual_dataloader_class = priors_utils.StandardDataLoader
     else:
-        n_out = 1
+        parts = c.dataloader_class.split(".")
+        module_path = ".".join(parts[:-1])
+        class_name = parts[-1]
+        try:
+            module = importlib.import_module(module_path)
+            actual_dataloader_class = getattr(module, class_name)
+        except Exception as e:
+            raise ImportError(
+                f"Could not import dataloader_class '{c.dataloader_class}': {e}"
+            ) from e
 
-    if continue_model:
+    if not c.priors:
+        raise ValueError("main_config.priors cannot be empty.")
+
+    if len(c.priors) != 1:
+        raise ValueError(
+            "Currently only supporting a single prior. Later this should be a seqeunce that is called in order by wrapping."
+        )
+
+    if len(c.priors) == 1 and callable(c.priors[0]):  # Simplistic assumption
+        get_batch_method_instance = c.priors[0]
+    elif isinstance(c.priors[0], prior.PriorConfig):
+        get_batch_method_instance = c.priors[0].create_get_batch_method()
+    else:
+        raise ValueError(
+            "main_config.priors must be a list of PriorConfig objects or a single callable."
+        )
+
+    current_extra_prior_kwargs_dict = {}
+    if c.num_workers is not None:
+        current_extra_prior_kwargs_dict["num_workers"] = c.num_workers
+
+    dl = actual_dataloader_class(
+        get_batch_method=get_batch_method_instance,  # Use the constructed/resolved instance
+        num_steps=c.steps_per_epoch,
+        batch_size=c.batch_size,
+        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
+        device=device,  # Pass the torch device object
+        n_targets_per_input=c.n_targets_per_input,
+        **current_extra_prior_kwargs_dict,
+    )
+
+    if continue_model:  # This was a non-config arg, defaulted to None
         model = continue_model
     else:
-        decoder_dict = (
-            decoder_dict if decoder_dict else {"standard": (None, n_out)}
-        )
-
         assert (
-            features_per_group > 0 or features_per_group == -1
+            c.model.features_per_group > 0 or c.model.features_per_group == -1
         ), "features_per_group must be > 0 or -1"
-        architectural_features_per_group = (
-            dl.num_features if features_per_group == -1 else features_per_group
-        )
 
-        encoder = (
-            encoder_generator(architectural_features_per_group, emsize)
-            if encoder_generator
-            else None
-        )
-        y_encoder = (
-            y_encoder_generator(1, emsize) if y_encoder_generator else None
-        )
-        model = transformer.TableTransformer(
-            encoder=encoder,
-            y_encoder=y_encoder,
-            features_per_group=architectural_features_per_group,
-            decoder_dict=decoder_dict,
-            ninp=emsize,
-            nhid=nhid,
-            nlayers=nlayers,
-            nhead=nhead,
-            attention_between_features=features_per_group != -1,
-            style_encoder=(
-                style_encoder_generator(
-                    architectural_features_per_group, emsize
-                )
-                if style_encoder_generator is not None
-                else None
-            ),  # the style encoder maps a tensor (batch_size [* num feature groups], [features in this group,] num styles) to (batch_size [* num feature groups], emsize)
-            y_style_encoder=(
-                y_style_encoder_generator(emsize)
-                if y_style_encoder_generator is not None
-                else None
-            ),  # the y_style encoder maps a tensor (batch_size, num y styles) to (batch_size, emsize)
-            **model_extra_args,
-        )
-    model.criterion = criterion
+        model = c.model.create_model()
+    criterion = model.criterion
+
     if load_weights_from_this_state_dict is not None:
         model.load_state_dict(load_weights_from_this_state_dict)
 
@@ -175,38 +248,45 @@ def train(
         f"Using a Transformer with {sum(p.numel() for p in model.parameters())/1000/1000:.{2}f} M parameters"
     )
 
-    try:
-        for (k, v), (k2, v2) in zip(
-            model.state_dict().items(),
-            initialize_with_model.state_dict().items(),
-        ):
-            print(k, ((v - v2) / v).abs().mean(), v.shape)
-    except Exception:
-        pass
-
     model.to(device)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=lr, weight_decay=weight_decay
+    if hasattr(c.optimizer, "create_optimizer"):
+        optimizer = c.optimizer.create_optimizer(model.parameters())
+    else:
+        raise ValueError(
+            "main_config.optimizer must have a 'create_optimizer' method"
+        )
+
+    # Resolve scheduler string to function
+    if c.scheduler == "cosine_decay":
+        scheduler_fn = get_cosine_schedule_with_warmup
+    else:
+        raise ValueError(f"Scheduler {c.scheduler} not supported")
+
+    scheduler = scheduler_fn(  # todo move warmup epochs into scheduler args, ideally as steps instead!?
+        optimizer, c.warmup_epochs, c.epochs if c.epochs is not None else 100
     )
-    scheduler = scheduler(
-        optimizer, warmup_epochs, epochs if epochs is not None else 100
-    )  # when training for fixed time lr schedule takes 100 steps
 
     start_epoch = 1  # Default start epoch
 
-    # Load checkpoint if provided
-    if train_state_dict_load_path:
-        if (train_state_dict_save_path != train_state_dict_load_path) or (
-            (train_state_dict_save_path == train_state_dict_load_path)
-            and os.path.exists(train_state_dict_load_path)
+    if c.train_state_dict_load_path:
+        if (c.train_state_dict_save_path != c.train_state_dict_load_path) or (
+            (c.train_state_dict_save_path == c.train_state_dict_load_path)
+            and os.path.exists(c.train_state_dict_load_path)
         ):
-            load_checkpoint(
-                model, optimizer, scheduler, train_state_dict_load_path, device
+            # load_checkpoint needs the scheduler instance, not the factory
+            start_epoch = (
+                load_checkpoint(  # load_checkpoint might return start_epoch
+                    model,
+                    optimizer,
+                    scheduler,
+                    c.train_state_dict_load_path,
+                    device,
+                )
             )
         else:
             print(
-                f"Not loading checkpoint as {train_state_dict_load_path} does not exist yet. Will create it during training."
+                f"Checkpoint file {c.train_state_dict_load_path} not found or load/save paths are identical and file doesn't exist. Starting from scratch."
             )
 
     if using_dist:
@@ -223,13 +303,13 @@ def train(
     else:
         dl.model = model
 
-    scaler = GradScaler() if train_mixed_precision else None
+    scaler = GradScaler() if c.train_mixed_precision else None
 
     # check that everything uses up-to-date APIs
     utils.check_compatibility(dl)
 
     def train_epoch():
-        model.train()  # Turn on the train mode
+        model.train()
         total_loss = 0.0
         total_positional_losses = 0.0
         total_positional_losses_recorded = 0
@@ -237,24 +317,37 @@ def train(
         ignore_steps = 0
         before_get_batch = time.time()
         assert (
-            len(dl) % aggregate_k_gradients == 0
+            len(dl) % c.aggregate_k_gradients == 0
         ), "Please set the number of steps per epoch s.t. `aggregate_k_gradients` divides it."
         tqdm_iter = (
             tqdm(range(len(dl)), desc="Training Epoch")
-            if rank == 0 and progress_bar
+            if rank == 0 and c.progress_bar
             else None
         )
         importance_sampling_infos = []  # Renamed from squared_grad_magnitudes_and_infos
 
         for batch_index, batch in enumerate(dl):
-            assert batch.batch_first, "batch_first must be true, make sure to adapt your prior to provide shapes like (batch_size, seq_len, ...)"
+            batch: prior.Batch = (
+                batch  # Type annotation for better IDE support
+            )
+            assert (
+                c.batch_size
+                == len(batch.x)
+                == len(batch.y)
+                == len(batch.target_y)
+            ), "Our code was updated to use the more intuitive batch first format, please make sure your get_batch function returns data with shapes (batch_size, seq_len, ...)"
+            if not model.attention_between_features:
+                assert (
+                    model.features_per_group == batch.x.shape[2]
+                ), "features_per_group must match the number of features in the input, if attention_between_features is False"
             targets = batch.target_y.to(device)
             single_eval_pos = batch.single_eval_pos
+            seq_len = batch.x.shape[1]
 
             tqdm_iter.update() if tqdm_iter is not None else None
             if using_dist and not (
-                batch_index % aggregate_k_gradients
-                == aggregate_k_gradients - 1
+                batch_index % c.aggregate_k_gradients
+                == c.aggregate_k_gradients - 1
             ):
                 cm = model.no_sync()
             else:
@@ -332,9 +425,13 @@ def train(
                         # Repeat output in the semi-last dimension n_targets_per_input times
                         output = output.unsqueeze(2).expand(
                             *output.shape[:2],
-                            n_targets_per_input,
+                            c.n_targets_per_input,
                             output.shape[-1],
                         )
+
+                        if len(targets.shape) == 2:
+                            # This implies we only have a single target per input
+                            targets = targets.unsqueeze(2)
 
                         assert targets.shape == output.shape[:-1], (
                             f"Target shape {targets.shape} "
@@ -371,13 +468,13 @@ def train(
                         elif isinstance(criterion, nn.CrossEntropyLoss):
                             targets[torch.isnan(targets)] = -100
                             losses = criterion(
-                                output.reshape(-1, n_out),
+                                output.reshape(-1, len(criterion.weight)),
                                 targets.long().flatten(),
                             )
                         else:
                             losses = criterion(output, targets.unsqueeze(-1))
                         losses = einops.rearrange(
-                            losses, "(b t) s -> b s t", t=n_targets_per_input
+                            losses, "(b t) s -> b s t", t=c.n_targets_per_input
                         )
                         losses = losses.mean(-1)
                         loss, nan_share = utils.torch_nanmean(
@@ -386,15 +483,15 @@ def train(
                             ),  # loss per sequence without nanmean
                             return_nanshare=True,
                         )
-                        loss_scaled = loss / aggregate_k_gradients
+                        loss_scaled = loss / c.aggregate_k_gradients
 
                     if scaler:
                         loss_scaled = scaler.scale(loss_scaled)
                     loss_scaled.backward()
 
                     if (
-                        batch_index % aggregate_k_gradients
-                        == aggregate_k_gradients - 1
+                        batch_index % c.aggregate_k_gradients
+                        == c.aggregate_k_gradients - 1
                     ):
                         if scaler:
                             scaler.unscale_(optimizer)
@@ -457,7 +554,7 @@ def train(
 
                         if batch.gradient_multipliers is not None:
                             assert (
-                                aggregate_k_gradients == 1
+                                c.aggregate_k_gradients == 1
                             ), "Scaling grads is only supported if you don't do grad acc."
                             assert all(
                                 batch.gradient_multipliers.view(-1)[0]
@@ -541,7 +638,7 @@ def train(
 
             before_get_batch = time.time()
         return EpochResult(
-            loss=total_loss / steps_per_epoch,
+            loss=total_loss / c.steps_per_epoch,
             positional_losses=(
                 total_positional_losses / total_positional_losses_recorded
             ).tolist(),
@@ -567,8 +664,8 @@ def train(
 
         # Adjust epoch range based on start_epoch
         epoch_iterator = (
-            range(start_epoch, epochs + 1)
-            if epochs is not None
+            range(start_epoch, c.epochs + 1)
+            if c.epochs is not None
             else itertools.count(start_epoch)
         )
 
@@ -586,14 +683,14 @@ def train(
                 print("Invalid epoch encountered, skipping...")
                 print(e)
                 raise (e)
-            if hasattr(dl, "validate") and epoch % validation_period == 0:
+            if hasattr(dl, "validate") and epoch % c.validation_period == 0:
                 with torch.no_grad():
                     val_score = dl.validate(model)
 
             else:
                 val_score = None
 
-            if verbose:
+            if c.verbose:
                 print("-" * 89)
                 print(
                     f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {epoch_result.loss:5.2f} | "
@@ -617,9 +714,9 @@ def train(
             scheduler.step()
 
             # Save model state dict after each epoch if path is provided (on rank 0)
-            if train_state_dict_save_path is not None and rank == 0:
+            if c.train_state_dict_save_path is not None and rank == 0:
                 save_checkpoint(
-                    model, optimizer, train_state_dict_save_path, epoch
+                    model, optimizer, c.train_state_dict_save_path, epoch
                 )
 
     except KeyboardInterrupt:

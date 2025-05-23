@@ -20,12 +20,8 @@ from torch import nn
 from torch.utils.data import DataLoader, IterableDataset
 from typing_extensions import override
 
-from ..utils import (
-    get_uniform_single_eval_pos_sampler,
-    normalize_data,
-    set_locals_in_self,
-)
-from .prior import Batch, PriorDataLoader
+from ..utils import normalize_data, set_locals_in_self
+from .prior import Batch
 
 
 # Moved this function outside the class
@@ -33,17 +29,13 @@ def compute_eval_pos_sequence(
     num_steps,
     eval_pos_seq_len_sampler,
     batch_size=None,
-    seq_len_maximum=None,
-    dynamic_batch_size=None,
 ):
     """Pre-computes single_eval_pos, seq_len and adjusted batch_size for all steps in the dataloader.
 
     Args:
         num_steps: Total number of steps (batches) in the epoch.
         eval_pos_seq_len_sampler: Callable that returns (single_eval_pos, seq_len) tuples
-        batch_size: Base batch size before dynamic adjustment
-        seq_len_maximum: Maximum sequence length for dynamic batch size scaling
-        dynamic_batch_size: Power factor for dynamic batch size scaling
+        batch_size: Base batch size
 
     Returns:
         List of (single_eval_pos, seq_len, adjusted_batch_size) tuples for each step
@@ -52,20 +44,7 @@ def compute_eval_pos_sequence(
     for _ in range(num_steps):
         single_eval_pos, seq_len = eval_pos_seq_len_sampler()
 
-        # Calculate dynamic batch size if parameters are provided
-        adjusted_batch_size = batch_size
-        # Check specifically if dynamic_batch_size is provided and non-zero/non-None
-        if dynamic_batch_size and all(
-            x is not None for x in [batch_size, seq_len_maximum]
-        ):
-            adjusted_batch_size = batch_size * math.floor(
-                math.pow(seq_len_maximum, dynamic_batch_size)
-                / math.pow(seq_len, dynamic_batch_size)
-            )
-
-        eval_pos_sequence.append(
-            (single_eval_pos, seq_len, adjusted_batch_size)
-        )
+        eval_pos_sequence.append((single_eval_pos, seq_len, batch_size))
 
     return eval_pos_sequence
 
@@ -75,7 +54,6 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
         self,
         get_batch_method: Callable[[], Batch],
         num_steps: int,
-        # Add sampler and dynamic batch size params needed for sequence computation
         eval_pos_seq_len_sampler: Callable,
         **get_batch_kwargs,
     ) -> None:
@@ -90,15 +68,11 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
         # Compute the sequence once per iterator creation (i.e., per worker)
         # Extract necessary parameters from stored kwargs for clarity
         batch_size = self.kwargs.get("batch_size")
-        seq_len_maximum = self.kwargs.get("seq_len_maximum")
-        dynamic_batch_size = self.kwargs.get("dynamic_batch_size")
 
         eval_pos_sequence = compute_eval_pos_sequence(
             self.num_steps,
             self.eval_pos_seq_len_sampler,
             batch_size,
-            seq_len_maximum,
-            dynamic_batch_size,
         )
 
         worker_info = torch.utils.data.get_worker_info()
@@ -128,12 +102,6 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
             kwargs["batch_size"] = adjusted_batch_size
             # Remove sampler from kwargs passed to get_batch_method if it's not expected
             kwargs.pop("eval_pos_seq_len_sampler", None)
-            kwargs.pop(
-                "dynamic_batch_size", None
-            )  # Also remove dynamic_batch_size if not expected
-            kwargs.pop(
-                "seq_len_maximum", None
-            )  # Remove seq_len_maximum if not expected
 
             b = self.get_batch_method(**kwargs)
             # Ensure single_eval_pos is set on the batch object if get_batch_method doesn't handle it
@@ -186,25 +154,8 @@ class StandardDataLoader(DataLoader):
         set_locals_in_self(locals())
 
         # The stuff outside the or is set as class attribute before instantiation.
-        self.num_features = (
-            get_batch_kwargs.get("num_features") or self.num_features
-        )
         self.epoch_count = 0
         self.importance_sampling_infos = None
-
-        # Extract sampler for _BatchedIterableDataset init
-        if eval_pos_seq_len_sampler is None:
-            # Default sampler if not provided in kwargs (matches old _BatchedIterableDataset logic)
-            # Requires seq_len to be in get_batch_kwargs if used.
-            seq_len = get_batch_kwargs.get("seq_len")
-            if seq_len is None:
-                raise ValueError(
-                    "seq_len must be provided in get_batch_kwargs if eval_pos_seq_len_sampler is not."
-                )
-            eval_pos_seq_len_sampler = lambda: (
-                get_uniform_single_eval_pos_sampler(seq_len - 1)(),
-                seq_len,
-            )
 
         self.eval_pos_seq_len_sampler = eval_pos_seq_len_sampler
 
@@ -282,15 +233,7 @@ class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
         kwargs["single_eval_pos"], kwargs["seq_len"] = (
             eval_pos_seq_len_sampler()
         )
-        # Scales the batch size dynamically with the power of 'dynamic_batch_size'.
         # A transformer with quadratic memory usage in the seq len would need a power of 2 to keep memory constant.
-        if kwargs.get("dynamic_batch_size"):
-            kwargs["batch_size"] = kwargs["batch_size"] * math.floor(
-                math.pow(
-                    kwargs["seq_len_maximum"], kwargs["dynamic_batch_size"]
-                )
-                / math.pow(kwargs["seq_len"], kwargs["dynamic_batch_size"])
-            )
         batch: Batch = self.get_batch_method(*args, **kwargs)
         if batch.single_eval_pos is None:
             batch.single_eval_pos = kwargs["single_eval_pos"]
@@ -503,16 +446,6 @@ class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
 
         # Need the sampler for the gbm call below
         sampler = get_batch_kwargs.get("eval_pos_seq_len_sampler")
-        if sampler is None:
-            seq_len = get_batch_kwargs.get("seq_len")
-            if seq_len is None:
-                raise ValueError(
-                    "seq_len must be provided in get_batch_kwargs for DiscreteImportanceSamplingDataLoader if eval_pos_seq_len_sampler is not."
-                )
-            sampler = lambda: (
-                get_uniform_single_eval_pos_sampler(seq_len - 1)(),
-                seq_len,
-            )
 
         hp_indices = []
         hyperparameters_for_all_batches = []
@@ -566,9 +499,9 @@ class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
 def zero_time_get_batch(
     batch_size, seq_len, num_features, device="cpu", **kwargs
 ):
-    y = torch.rand(seq_len, batch_size, 1, device=device)
+    y = torch.rand(batch_size, seq_len, 1, device=device)
     return Batch(
-        x=torch.rand(seq_len, batch_size, num_features, device=device),
+        x=torch.rand(batch_size, seq_len, num_features, device=device),
         y=y,
         target_y=y.clone(),
     )

@@ -11,9 +11,7 @@ from dataclasses import dataclass
 
 import einops
 import torch
-from pfns.model import transformer
-from pfns.model.bar_distribution import BarDistribution
-from pfns.model.criterions import BarDistributionConfig, CrossEntropyConfig
+from pfns.model.transformer_config import TransformerConfig
 from torch import nn
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
@@ -44,89 +42,13 @@ class OptimizerConfig(base_config.BaseConfig):
 
 
 @dataclass(frozen=True)
-class PerFeatureTransformerConfig(base_config.BaseConfig):
-    # encoder_generator: tp.Optional[str] = None # todo add back in as config, currently only supporting standard encoder
-    # y_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently only supporting standard encoder
-    # style_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently not supported
-    # y_style_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently not supported
-    criterion: CrossEntropyConfig | BarDistributionConfig
-    decoder_dict: tp.Dict[str, base_config.BaseTypes] | None = None
-    emsize: int = 200
-    nhid: int = 200
-    nlayers: int = 6
-    nhead: int = 2
-    features_per_group: int = 1
-    attention_between_features: bool = True
-    model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
-
-    def create_model(self):
-        encoder_generator = None
-        y_encoder_generator = None
-        style_encoder_generator = None
-        y_style_encoder_generator = None
-
-        # Resolve criterion
-        criterion = self.criterion.get_criterion()
-
-        # Determine n_out based on the resolved criterion
-        if isinstance(criterion, BarDistribution):
-            n_out = criterion.num_bars
-        elif isinstance(criterion, nn.CrossEntropyLoss):
-            n_out = criterion.weight.shape[0]
-        else:
-            raise ValueError(f"Criterion {criterion} not supported")
-
-        decoder_dict = (
-            self.decoder_dict
-            if self.decoder_dict
-            else {"standard": (None, n_out)}
-        )
-
-        encoder = (
-            encoder_generator(self.features_per_group, self.emsize)
-            if encoder_generator
-            else None
-        )
-        y_encoder = (
-            y_encoder_generator(1, self.emsize)
-            if y_encoder_generator
-            else None
-        )
-        model = transformer.TableTransformer(
-            encoder=encoder,
-            y_encoder=y_encoder,
-            features_per_group=self.features_per_group,
-            decoder_dict=decoder_dict,
-            ninp=self.emsize,
-            nhid=self.nhid,
-            nlayers=self.nlayers,
-            nhead=self.nhead,
-            attention_between_features=self.attention_between_features,
-            style_encoder=(
-                style_encoder_generator(self.features_per_group, self.emsize)
-                if style_encoder_generator is not None
-                else None
-            ),
-            y_style_encoder=(
-                y_style_encoder_generator(self.emsize)
-                if y_style_encoder_generator is not None
-                else None
-            ),
-            batch_first=True,  # model is batch_first by default now
-            **(self.model_extra_args or {}),
-        )
-        model.criterion = criterion
-        return model
-
-
-@dataclass(frozen=True)
 class MainConfig(base_config.BaseConfig):
     # Training configuration
     priors: tp.List[prior.PriorConfig]
     optimizer: OptimizerConfig
 
     # Model (includes criterion)
-    model: PerFeatureTransformerConfig
+    model: TransformerConfig
 
     # Training
     batch_shape_sampler: BatchShapeSamplerConfig

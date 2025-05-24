@@ -23,6 +23,12 @@ class DistributionConfig(BaseConfig):
     def encode_to_torch(self, value):
         return value
 
+    def sample(self):
+        if self.log:
+            log_lower = math.log(self.lower)
+            log_upper = math.log(self.upper)
+            return math.exp(random.uniform(log_lower, log_upper))
+        return random.uniform(self.lower, self.upper)
 
 @dataclass(frozen=True)
 class UniformFloatDistConfig(DistributionConfig):

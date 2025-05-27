@@ -1,13 +1,15 @@
 import random
 from typing import Literal
 
-import torch
 import numpy as np
+
+import torch
+
+from .. import Batch
 
 from .ops import binary_ops, unary_ops
 from .trees import evaluate_tree, sample_tree
 from .utils import print_tree
-from .. import Batch
 
 
 def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
@@ -25,7 +27,9 @@ def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
         x: Actual input data of shape [num_samples, num_features]
         tree_inputs: Inputs for the tree of shape [num_samples, num_tree_inputs]
     """
-    assert num_tree_leaves > num_constants, f"num_tree_leaves ({num_tree_leaves}) must be greater than num_constants ({num_constants})"
+    assert (
+        num_tree_leaves > num_constants
+    ), f"num_tree_leaves ({num_tree_leaves}) must be greater than num_constants ({num_constants})"
 
     # Generate random input data
     x = torch.randn(num_samples, num_features)
@@ -52,41 +56,47 @@ def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
 
 def boring_y(y: torch.Tensor):
     """Check if a vector y is 'boring', meaning it is close to 0 (due to normalization) almost everywhere.
-    
+
     A vector is considered boring if less than 2% of its values deviate from the median by more than 0.1.
-    
+
     Args:
         y: A vector of values
-        
+
     Returns:
         bool: True if the vector is boring, False otherwise
     """
     median = y.median()
-    return (((y > median + 0.1) | (y < median - 0.1)).sum().item() / len(y)) < 0.02
+    return (
+        ((y > median + 0.1) | (y < median - 0.1)).sum().item() / len(y)
+    ) < 0.02
 
 
 # todo get first trainings running
 # todo fix num workers > 0
 # todo get first hebo-based trainings running, too
 
+
 def get_batch(
     batch_size,
     seq_len,
     num_features,
     hyperparameters=None,
-    surplus_samples_share_for_hiding_normalization=.1,
+    surplus_samples_share_for_hiding_normalization=0.1,
     n_targets_per_input=1,
     single_eval_pos=None,  # not using this
     device="cpu",  # ignoring this
 ):
-    assert n_targets_per_input == 1, "n_targets_per_input must be 1 for now (can be changed later)"
+    assert (
+        n_targets_per_input == 1
+    ), "n_targets_per_input must be 1 for now (can be changed later)"
     hyperparameters = hyperparameters or {}
 
     batch_as_list = []
 
     while len(batch_as_list) < batch_size:
         x, y, tree = sample_dataset(
-            num_samples=seq_len + int(surplus_samples_share_for_hiding_normalization * seq_len),
+            num_samples=seq_len
+            + int(surplus_samples_share_for_hiding_normalization * seq_len),
             num_features=num_features,
             **hyperparameters,
         )
@@ -94,9 +104,9 @@ def get_batch(
             batch_as_list.append((x, y, tree))
 
     batch = Batch(
-        x=torch.stack([x for x, _, _ in batch_as_list])[:,:seq_len],
-        y=torch.stack([y for _, y, _ in batch_as_list])[:,:seq_len],
-        target_y=torch.stack([y for _, y, _ in batch_as_list])[:,:seq_len],
+        x=torch.stack([x for x, _, _ in batch_as_list])[:, :seq_len],
+        y=torch.stack([y for _, y, _ in batch_as_list])[:, :seq_len],
+        target_y=torch.stack([y for _, y, _ in batch_as_list])[:, :seq_len],
     )
 
     # longterm todo: add styles based on the tree
@@ -135,7 +145,9 @@ def sample_dataset(
     max_tree_leave_share = 1.0 + max_share_oversampled_tree_leaves
     max_num_tree_leaves = int(num_features * max_tree_leave_share)
 
-    num_tree_leaves = random.randint(max(num_features, 2), max(max_num_tree_leaves, 2))
+    num_tree_leaves = random.randint(
+        max(num_features, 2), max(max_num_tree_leaves, 2)
+    )
 
     num_constants = random.randint(
         round(min_constant_share * num_tree_leaves),

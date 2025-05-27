@@ -2,20 +2,25 @@ import typing as tp
 from dataclasses import dataclass
 
 from pfns import base_config
-from pfns.model import transformer
+from pfns.model import encoders, transformer
 from pfns.model.bar_distribution import BarDistribution
 from pfns.model.criterions import BarDistributionConfig, CrossEntropyConfig
+from pfns.model.encoders import StyleEncoderConfig
 
 from torch import nn
 
 
 @dataclass(frozen=True)
 class TransformerConfig(base_config.BaseConfig):
-    # encoder_generator: tp.Optional[str] = None # todo add back in as config, currently only supporting standard encoder
-    # y_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently only supporting standard encoder
-    # style_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently not supported
-    # y_style_encoder_generator: tp.Optional[str] = None # todo add back in as config, currently not supported
     criterion: CrossEntropyConfig | BarDistributionConfig
+    encoder: tp.Optional[encoders.EncoderConfig] = (
+        None  # todo add back in as config, currently only supporting standard encoder
+    )
+    y_encoder: tp.Optional[encoders.EncoderConfig] = (
+        None  # todo add back in as config, currently only supporting standard encoder
+    )
+    style_encoder: tp.Optional[StyleEncoderConfig] = None
+    y_style_encoder: tp.Optional[StyleEncoderConfig] = None
     decoder_dict: tp.Dict[str, base_config.BaseTypes] | None = None
     emsize: int = 200
     nhid: int = 200
@@ -26,11 +31,6 @@ class TransformerConfig(base_config.BaseConfig):
     model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
 
     def create_model(self):
-        encoder_generator = None
-        y_encoder_generator = None
-        style_encoder_generator = None
-        y_style_encoder_generator = None
-
         # Resolve criterion
         criterion = self.criterion.get_criterion()
 
@@ -48,16 +48,30 @@ class TransformerConfig(base_config.BaseConfig):
             else {"standard": (None, n_out)}
         )
 
-        encoder = (
-            encoder_generator(self.features_per_group, self.emsize)
-            if encoder_generator
-            else None
-        )
-        y_encoder = (
-            y_encoder_generator(1, self.emsize)
-            if y_encoder_generator
-            else None
-        )
+        if self.encoder is not None:
+            encoder = self.encoder.create_encoder(
+                features=self.features_per_group, emsize=self.emsize
+            )
+        else:
+            encoder = None
+
+        if self.y_encoder is not None:
+            y_encoder = self.y_encoder.create_encoder(
+                features=1, emsize=self.emsize
+            )
+        else:
+            y_encoder = None
+
+        if self.style_encoder is not None:
+            style_encoder = self.style_encoder.create_encoder(self.emsize)
+        else:
+            style_encoder = None
+
+        if self.y_style_encoder is not None:
+            y_style_encoder = self.y_style_encoder.create_encoder(self.emsize)
+        else:
+            y_style_encoder = None
+
         model = transformer.TableTransformer(
             encoder=encoder,
             y_encoder=y_encoder,
@@ -68,16 +82,8 @@ class TransformerConfig(base_config.BaseConfig):
             nlayers=self.nlayers,
             nhead=self.nhead,
             attention_between_features=self.attention_between_features,
-            style_encoder=(
-                style_encoder_generator(self.features_per_group, self.emsize)
-                if style_encoder_generator is not None
-                else None
-            ),
-            y_style_encoder=(
-                y_style_encoder_generator(self.emsize)
-                if y_style_encoder_generator is not None
-                else None
-            ),
+            style_encoder=style_encoder,
+            y_style_encoder=y_style_encoder,
             batch_first=True,  # model is batch_first by default now
             **(self.model_extra_args or {}),
         )

@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from typing import Any
 
 import numpy as np
 import torch
-from torch import nn
 
+from pfns import base_config
+from pfns.model import encoders
+from pfns.priors.hyperparameter_sampling import (
+    DistributionConfig,
+    HyperparameterNormalizer,
+)
+from torch import nn
 
 ### Simple Encoders
 
@@ -34,6 +42,107 @@ def get_linear_x_encoder(emsize, features_per_group=1):
             emsize=emsize,
         ),
     )
+
+
+### Encoder Config
+
+
+@dataclass(frozen=True)
+class EncoderConfig(base_config.BaseConfig):
+    variable_num_features_normalization: bool = False
+    nan_handling: bool = False
+    constant_normalization_mean: float = 0.0
+    constant_normalization_std: float = 1.0
+    train_normalization: bool = False
+
+    def __post_init__(self):
+        assert not (
+            self.train_normalization
+            and (
+                self.constant_normalization_mean != 0.0
+                or self.constant_normalization_std != 1.0
+            )
+        )
+        return super().__post_init__()
+
+    def create_encoder(self, features, emsize):
+        encoder_sequence = []
+        in_keys_for_linear = ("main",)
+        if (
+            self.constant_normalization_mean is not None
+            or self.constant_normalization_std is not None
+        ):
+            encoder_sequence.append(
+                ConstantNormalizationInputEncoderStep(
+                    mean=self.constant_normalization_mean,
+                    std=self.constant_normalization_std,
+                )
+            )
+        if self.train_normalization:
+            encoder_sequence.append(
+                InputNormalizationEncoderStep(
+                    normalize_on_train_only=True,
+                    normalize_to_ranking=False,
+                    normalize_x=True,
+                    remove_outliers=True,
+                )
+            )
+        if self.variable_num_features_normalization:
+            encoder_sequence.append(
+                VariableNumFeaturesEncoderStep(
+                    num_features=features,
+                )
+            )
+        if self.nan_handling:
+            encoder_sequence.append(NanHandlingEncoderStep())
+            in_keys_for_linear = ("main", "nan_indicators")
+
+        encoder_sequence.append(
+            LinearInputEncoderStep(
+                num_features=features * len(in_keys_for_linear),
+                emsize=emsize,
+                in_keys=in_keys_for_linear,
+                out_keys=("output",),
+            )
+        )
+        return SequentialEncoder(*encoder_sequence)
+
+
+### Style Encoders
+
+
+def linear_style_encoder(num_styles, emsize):
+    return nn.Linear(num_styles, emsize)
+
+
+@dataclass(frozen=True)
+class StyleEncoderConfig(base_config.BaseConfig):
+    num_styles: int | None = None
+    normalize_to_hyperparameters: (
+        dict[str, base_config.BaseTypes | DistributionConfig] | None
+    ) = None
+    encoder_type: str = "linear"
+
+    def create_encoder(self, emsize):
+        num_features = self.num_styles
+
+        modules = []
+
+        if self.normalize_to_hyperparameters is not None:
+            assert (
+                self.num_styles is None
+            ), "num_styles must be None if normalize_to_hyperparameters is given"
+            hpn = HyperparameterNormalizer(self.normalize_to_hyperparameters)
+            num_features = hpn.num_hps * 2
+            modules.append(hpn)
+
+        if self.encoder_type == "linear":
+            modules.append(encoders.linear_style_encoder(num_features, emsize))
+            return nn.Sequential(*modules)
+        else:
+            raise ValueError(
+                f"Style encoder generator {self.encoder_type} not supported"
+            )
 
 
 ### Custom Encoders

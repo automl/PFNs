@@ -1,12 +1,13 @@
 import importlib
 import json
 import typing as tp
+from collections.abc import Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from typing import ClassVar
 
 import yaml
 
-BaseTypes = tp.Union[str, int, float, bool, None, list, dict]
+BaseTypes = tp.Union[str, int, float, bool, None, Sequence, dict]
 
 
 class BaseConfig:
@@ -39,7 +40,7 @@ class BaseConfig:
         """
         if isinstance(value, (str, int, float, bool, type(None), BaseConfig)):
             return
-        elif isinstance(value, list):
+        elif isinstance(value, Sequence) and not isinstance(value, str):
             for i, v in enumerate(value):
                 self._validate_field_type(f"{name}[{i}]", v)
         elif isinstance(value, dict):
@@ -54,26 +55,24 @@ class BaseConfig:
             )
 
     def to_dict(self):
+        def process_value(v):
+            if isinstance(v, BaseConfig):
+                return v.to_dict()
+            elif isinstance(v, Sequence) and not isinstance(v, str):
+                return [process_value(item) for item in v]
+            elif isinstance(v, dict):
+                return {k: process_value(val) for k, val in v.items()}
+            else:
+                return v
+
         out_dict = {}
         for f in fields(self):
             value = getattr(self, f.name)
-            if isinstance(value, BaseConfig):
-                out_dict[f.name] = value.to_dict()
-            elif isinstance(value, list):
-                out_dict[f.name] = [
-                    v.to_dict() if isinstance(v, BaseConfig) else v
-                    for v in value
-                ]
-            elif isinstance(value, dict):
-                out_dict[f.name] = {
-                    k: v.to_dict() if isinstance(v, BaseConfig) else v
-                    for k, v in value.items()
-                }
-            else:
-                out_dict[f.name] = value
+            out_dict[f.name] = process_value(value)
+
         module_name = self.__module__
         class_name = self.__class__.__name__
-        out_dict["type"] = f"{module_name}:{class_name}"
+        out_dict["__config_type__"] = f"{module_name}:{class_name}"
         return out_dict
 
     def to_json(self):
@@ -94,28 +93,28 @@ class BaseConfig:
 
     @staticmethod
     def from_dict(data: dict):
-        module_name, class_name = data.pop("type").split(":")
+        """Build a config object from a nested dictionary structure.
+        The dictionary should match what to_dict() produces, handling both nested dicts and lists."""
+        # Base case - not a container
+        if not isinstance(data, (dict, Sequence)) or isinstance(data, str):
+            return data
+
+        # Handle sequences (lists/tuples)
+        if isinstance(data, Sequence):
+            return [BaseConfig.from_dict(item) for item in data]
+
+        # it is a dict
+        if "__config_type__" not in data:
+            return {k: BaseConfig.from_dict(v) for k, v in data.items()}
+
+        # This is a config object
+        module_name, class_name = data.pop("__config_type__").split(":")
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
 
+        # Recursively build nested configs
+        processed_data = {}
         for k, v in data.items():
-            if isinstance(v, dict) and "type" in v:
-                data[k] = BaseConfig.from_dict(
-                    v
-                )  # Use ConfigBase instead of globals()
-            elif isinstance(v, list):
-                data[k] = [
-                    BaseConfig.from_dict(item)
-                    if isinstance(item, dict) and "type" in item
-                    else item
-                    for item in v
-                ]
-            elif isinstance(v, dict):
-                data[k] = {
-                    key: BaseConfig.from_dict(value)
-                    if isinstance(value, dict) and "type" in value
-                    else value
-                    for key, value in v.items()
-                }
+            processed_data[k] = BaseConfig.from_dict(v)
 
-        return cls(**data)
+        return cls(**processed_data)

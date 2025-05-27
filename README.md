@@ -27,6 +27,12 @@ cd PFNs
 pip install -e .
 ```
 
+### Developing
+We use a CI, the parts of which you can run before locally:
+1. Tests: To run tests simply use `pytest tests`.
+2. Formatting: Use `pre-commit` (install with `pip install pre-commit`, then `pre-commit install`) and run manually it with `pre-commit run --all-files --show-diff-on-failure`
+
+
 ### Get Started
 
 Check out our [Getting Started Colab](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf).

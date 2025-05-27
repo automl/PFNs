@@ -110,7 +110,7 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
             yield b
 
 
-def worker_init_fn(epoch, worker_id):
+def worker_init_fn(worker_id: int, epoch: int):
     # 1. Set PyTorch threads
     torch.set_num_threads(1)
 
@@ -176,10 +176,10 @@ class StandardDataLoader(DataLoader):
             batch_sampler=None,
             shuffle=False,
             num_workers=num_workers,
-            worker_init_fn=lambda worker_id: worker_init_fn(
-                self.epoch_count, worker_id
+            worker_init_fn=partial(
+                worker_init_fn, epoch=self.epoch_count
             ),  # Use the updated function
-            collate_fn=lambda x: x,  # Dataset yields complete batches
+            collate_fn=None,  # Dataset yields complete batches
         )
 
     def __len__(self):
@@ -624,24 +624,6 @@ def randomize_classes(x, num_classes):
     )
     x = ((x.unsqueeze(-1) == classes) * random_classes).sum(-1)
     return x
-
-
-@torch.no_grad()
-def sample_num_feaetures_get_batch(
-    batch_size, seq_len, num_features, hyperparameters, get_batch, **kwargs
-):
-    if (
-        hyperparameters.get("sample_num_features", True)
-        and kwargs.get("epoch", 1) > 0
-    ):  # don't sample on test batch
-        num_features = torch.randint(1, num_features + 1, size=[1]).item()
-    return get_batch(
-        batch_size,
-        seq_len,
-        num_features,
-        hyperparameters=hyperparameters,
-        **kwargs,
-    )
 
 
 class CategoricalActivation(nn.Module):

@@ -88,7 +88,18 @@ class EpochResult(tp.NamedTuple):
     importance_sampling_infos: list  # gradient magnitude info
 
 
-def train(c: MainConfig, device: str | None = None):
+def train(
+    c: MainConfig,
+    device: str | None = None,
+    reusable_config: bool = True,
+    compile: bool = False,
+):
+    if reusable_config:
+        assert c.from_yaml(c.to_yaml()) == c, (
+            "Config is not safe to use, got different config: "
+            f"{c.from_yaml(c.to_yaml())=} vs {c=}"
+        )
+
     # Arguments from original signature not in MainConfig are set to defaults here
     load_weights_from_this_state_dict = None
     epoch_callback = None
@@ -100,11 +111,11 @@ def train(c: MainConfig, device: str | None = None):
     default_device: str = "cuda:0" if torch.cuda.is_available() else "cpu:0"
     if device is None:
         device = default_device
-    print(f"Found default device {device}.")
     using_dist, rank, device = init_dist(device)
+    print(f"Using device {device}.")
 
     # Resolve single_eval_pos_gen, todo make ready for multi gpu by including step info
-    eval_pos_seq_len_sampler = c.batch_shape_sampler.get_sampler()
+    eval_pos_seq_len_sampler = c.batch_shape_sampler.sample
     print(eval_pos_seq_len_sampler)
 
     # Resolve dataloader_class string to actual class
@@ -171,6 +182,9 @@ def train(c: MainConfig, device: str | None = None):
     )
 
     model.to(device)
+
+    if compile:
+        model = torch.compile(model)
 
     if hasattr(c.optimizer, "create_optimizer"):
         optimizer = c.optimizer.create_optimizer(model.parameters())
@@ -604,7 +618,7 @@ def train(c: MainConfig, device: str | None = None):
             except Exception as e:
                 print("Invalid epoch encountered, skipping...")
                 print(e)
-                raise (e)
+                raise  # Re-raises the original exception with trace
             if hasattr(dl, "validate") and epoch % c.validation_period == 0:
                 with torch.no_grad():
                     val_score = dl.validate(model)
@@ -638,7 +652,11 @@ def train(c: MainConfig, device: str | None = None):
             # Save model state dict after each epoch if path is provided (on rank 0)
             if c.train_state_dict_save_path is not None and rank == 0:
                 save_checkpoint(
-                    model, optimizer, c.train_state_dict_save_path, epoch
+                    model,
+                    optimizer,
+                    c.train_state_dict_save_path,
+                    epoch,
+                    config=c,
                 )
 
     except KeyboardInterrupt:
@@ -684,7 +702,9 @@ def load_checkpoint(
         raise e
 
 
-def save_checkpoint(model, optimizer, train_state_dict_save_path, epoch):
+def save_checkpoint(
+    model, optimizer, train_state_dict_save_path, epoch, config
+):
     save_model = (
         model.module
         if isinstance(model, torch.nn.parallel.DistributedDataParallel)
@@ -698,6 +718,7 @@ def save_checkpoint(model, optimizer, train_state_dict_save_path, epoch):
             "model_state_dict": save_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
+            "config": config,
         }
         torch.save(checkpoint, train_state_dict_save_path)
     except Exception as e:

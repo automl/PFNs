@@ -1,5 +1,6 @@
 import importlib
 from abc import ABCMeta, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from functools import partial
 from typing import Callable, ClassVar, Optional, Set
@@ -19,26 +20,42 @@ class PriorConfig(BaseConfig, metaclass=ABCMeta):
 @dataclass(frozen=True)
 class AdhocPriorConfig(PriorConfig):
     # Set as a class variable instead of being set at init
-    prior_name: str | None = None
-    get_batch_method: Callable | None = None
+    prior_names: str | Sequence[str] | None = None
+    get_batch_methods: Callable | Sequence[Callable] | None = None
     prior_kwargs: dict | None = None
 
     strict_field_types: ClassVar[bool] = False
 
     def create_get_batch_method(self) -> Callable:
+        # Local import to avoid circular import
+        from pfns.priors import get_batch_sequence
+
         assert (
-            (self.prior_name is None) != (self.get_batch_method is None)
-        ), f"Either prior_name or get_batch_method must be provided, got prior_name={self.prior_name} and get_batch_method={self.get_batch_method}"
+            (self.prior_names is None) != (self.get_batch_methods is None)
+        ), f"Either prior_name or get_batch_method must be provided, got prior_names={self.prior_names} and get_batch_methods={self.get_batch_methods}"
 
-        if self.prior_name is not None:
-            prior_module = importlib.import_module(
-                f"pfns.priors.{self.prior_name}"
-            )
-            get_batch = getattr(prior_module, "get_batch")
+        if self.prior_names is not None:
+            get_batch_methods = []
+            for prior_name in (
+                self.prior_names
+                if isinstance(self.prior_names, Sequence)
+                else [self.prior_names]
+            ):
+                prior_module = importlib.import_module(
+                    f"pfns.priors.{prior_name}"
+                )
+                get_batch = getattr(prior_module, "get_batch")
+                get_batch_methods.append(get_batch)
         else:
-            get_batch = self.get_batch_method
+            get_batch_methods = (
+                self.get_batch_methods
+                if isinstance(self.get_batch_methods, Sequence)
+                else [self.get_batch_methods]
+            )
 
-        return partial(get_batch, **self.prior_kwargs)
+        return partial(
+            get_batch_sequence(*get_batch_methods), **self.prior_kwargs
+        )
 
 
 @dataclass
@@ -89,6 +106,7 @@ def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
     :param ignore_attributes: attributes to remove from the merged batch, treated as if they were None.
     :return:
     """
+    assert False, "This function does not work for batch first yet and should be tested before use."
     not_none_fields = [
         f.name
         for f in fields(batches[0])

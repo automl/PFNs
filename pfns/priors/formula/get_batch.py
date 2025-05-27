@@ -2,10 +2,12 @@ import random
 from typing import Literal
 
 import torch
+import numpy as np
 
 from .ops import binary_ops, unary_ops
 from .trees import evaluate_tree, sample_tree
 from .utils import print_tree
+from .. import Batch
 
 
 def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
@@ -23,7 +25,7 @@ def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
         x: Actual input data of shape [num_samples, num_features]
         tree_inputs: Inputs for the tree of shape [num_samples, num_tree_inputs]
     """
-    assert num_tree_leaves > num_constants
+    assert num_tree_leaves > num_constants, f"num_tree_leaves ({num_tree_leaves}) must be greater than num_constants ({num_constants})"
 
     # Generate random input data
     x = torch.randn(num_samples, num_features)
@@ -48,20 +50,64 @@ def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
     return x, tree_inputs
 
 
-def boring_y(y):
-    return (((y > 0.1) | (y < -0.1)).sum().item() / len(y)) < 0.02
+def boring_y(y: torch.Tensor):
+    """Check if a vector y is 'boring', meaning it is close to 0 (due to normalization) almost everywhere.
+    
+    A vector is considered boring if less than 2% of its values deviate from the median by more than 0.1.
+    
+    Args:
+        y: A vector of values
+        
+    Returns:
+        bool: True if the vector is boring, False otherwise
+    """
+    median = y.median()
+    return (((y > median + 0.1) | (y < median - 0.1)).sum().item() / len(y)) < 0.02
 
 
-# todo finalize the new prior logic, including chains (for num features sampling and for hyperparam sampling with styles)
-# todo reinitialize styles to the config
-# todo add the real get_batch function, which does not sample the sample_dataset parameters, but filters boring datasets
-# todo figure out how to do sampled num features
+# todo get first trainings running
+# todo fix num workers > 0
+# todo get first hebo-based trainings running, too
+
+def get_batch(
+    batch_size,
+    seq_len,
+    num_features,
+    hyperparameters=None,
+    surplus_samples_share_for_hiding_normalization=.1,
+    n_targets_per_input=1,
+    single_eval_pos=None,  # not using this
+    device="cpu",  # ignoring this
+):
+    assert n_targets_per_input == 1, "n_targets_per_input must be 1 for now (can be changed later)"
+    hyperparameters = hyperparameters or {}
+
+    batch_as_list = []
+
+    while len(batch_as_list) < batch_size:
+        x, y, tree = sample_dataset(
+            num_samples=seq_len + int(surplus_samples_share_for_hiding_normalization * seq_len),
+            num_features=num_features,
+            **hyperparameters,
+        )
+        if random.random() < 0.1 or not boring_y(y):
+            batch_as_list.append((x, y, tree))
+
+    batch = Batch(
+        x=torch.stack([x for x, _, _ in batch_as_list])[:,:seq_len],
+        y=torch.stack([y for _, y, _ in batch_as_list])[:,:seq_len],
+        target_y=torch.stack([y for _, y, _ in batch_as_list])[:,:seq_len],
+    )
+
+    # longterm todo: add styles based on the tree
+
+    return batch
 
 
 def sample_dataset(
     num_samples,
     num_features,
-    max_num_tree_leaves=None,
+    max_share_oversampled_tree_leaves=0.0,
     min_constant_share=0.0,
     max_constant_share=1.0,
     binary_op_likelihoods: dict[str, float] | None = None,
@@ -73,23 +119,24 @@ def sample_dataset(
     bias_std: float = 1.0,
     max_unary_op_noise_std: float = 0.0,
     max_binary_op_noise_std: float = 0.0,
-):
+) -> tuple[torch.Tensor, torch.Tensor, np.ndarray]:
     """
     Sample a dataset based on a formula tree.
 
     Args:
         num_samples: Number of samples to generate
         num_features: Number of features in the input space
-        max_num_tree_leaves: Maximum number of leaves in the formula tree, same as num_features if None
+        share_oversampled_tree_leaves: Share of tree leaves that we want more than num_features, we will use (1. + this) * num_features as the number of tree leaves.
         num_constants: Number of constant inputs to use. The remaining (num_tree_inputs - num_constants) will be random dimensions.
         binary_op_likelihoods: Likelihoods of each binary operation, normalized.
         unary_op_likelihoods: Likelihoods of each unary operation, normalized.
     """
 
-    if max_num_tree_leaves is None:
-        max_num_tree_leaves = num_features
+    max_tree_leave_share = 1.0 + max_share_oversampled_tree_leaves
+    max_num_tree_leaves = int(num_features * max_tree_leave_share)
 
-    num_tree_leaves = random.randint(1, max_num_tree_leaves)
+    num_tree_leaves = random.randint(max(num_features, 2), max(max_num_tree_leaves, 2))
+
     num_constants = random.randint(
         round(min_constant_share * num_tree_leaves),
         min(round(max_constant_share * num_tree_leaves), num_tree_leaves - 1),
@@ -140,7 +187,7 @@ def sample_dataset(
         else:
             return 0.0
 
-    sampled_tree_np, leaf_indices = sample_tree(
+    tree, leaf_indices = sample_tree(
         num_leaves=num_tree_leaves,
         binary_op_sampler=binary_op_sampler,
         unary_op_sampler=unary_op_sampler,
@@ -157,5 +204,6 @@ def sample_dataset(
     x, tree_inputs = sample_x(
         num_samples, num_features, num_tree_leaves, num_constants
     )
-    y = evaluate_tree(sampled_tree_np, tree_inputs)
-    return x, y, sampled_tree_np
+    y = evaluate_tree(tree, tree_inputs)
+
+    return x, y, tree

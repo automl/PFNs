@@ -17,16 +17,16 @@ class BatchShapeSamplerConfig(base_config.BaseConfig):
         assert self.max is None or (self.min < self.max)
         assert self.max is None or (self.max < self.seq_len)
 
-    def sample(self) -> tuple[int, int]:
+    def sample(self, rng: random.Random = random) -> tuple[int, int]:
         if self.max is None:
             max = self.seq_len - 1
         else:
             max = self.max
         if self.type == "uniform":
-            return random.choices(range(self.min, max))[0], self.seq_len
+            return rng.choices(range(self.min, max))[0], self.seq_len
         else:
             p = 1.0  # the power of the weighted sampler
-            return random.choices(
+            return rng.choices(
                 range(self.min, max),
                 [
                     1 / math.pow(((max - self.min) - i), p)

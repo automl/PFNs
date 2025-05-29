@@ -30,7 +30,7 @@ class TransformerConfig(base_config.BaseConfig):
     attention_between_features: bool = True
     model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
 
-    def create_model(self):
+    def create_model(self) -> transformer.TableTransformer:
         # Resolve criterion
         criterion = self.criterion.get_criterion()
 

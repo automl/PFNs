@@ -57,8 +57,11 @@ class MainConfig(base_config.BaseConfig):
     train_state_dict_save_path: tp.Optional[str] = None
     train_state_dict_load_path: tp.Optional[str] = None
 
+    # Validation
+    test_priors: tp.List[prior.PriorConfig] | None = None
+    validation_period: int | None = None
+
     # Logging
-    validation_period: int = 10
     verbose: bool = True
     progress_bar: bool = False
 
@@ -81,7 +84,6 @@ def train(
 
     # Arguments from original signature not in MainConfig are set to defaults here
     load_weights_from_this_state_dict = None
-    epoch_callback = None
 
     total_start_time = time.time()
 
@@ -110,22 +112,31 @@ def train(
                 f"Could not import dataloader_class '{c.dataloader_class}': {e}"
             ) from e
 
-    if not c.priors:
-        raise ValueError("main_config.priors cannot be empty.")
+    def create_get_batch_method(priors: tp.List[prior.PriorConfig] | None):
+        if not priors:
+            raise ValueError("main_config.priors cannot be empty.")
 
-    if len(c.priors) != 1:
-        raise ValueError(
-            "Currently only supporting a single prior. Later this should be a seqeunce that is called in order by wrapping."
-        )
+        if len(priors) != 1:
+            raise ValueError(
+                "Currently only supporting a single prior. Later this should be a seqeunce that is called in order by wrapping."
+            )
 
-    if len(c.priors) == 1 and callable(c.priors[0]):  # Simplistic assumption
-        get_batch_method_instance = c.priors[0]
-    elif isinstance(c.priors[0], prior.PriorConfig):
-        get_batch_method_instance = c.priors[0].create_get_batch_method()
+        if len(priors) == 1 and callable(priors[0]):  # Simplistic assumption
+            get_batch_method_instance = priors[0]
+        elif isinstance(priors[0], prior.PriorConfig):
+            get_batch_method_instance = priors[0].create_get_batch_method()
+        else:
+            raise ValueError(
+                "main_config.priors and main_config.test_priors must be a list of PriorConfig objects or a single callable."
+            )
+
+        return get_batch_method_instance
+
+    get_batch_method_instance = create_get_batch_method(c.priors)
+    if c.test_priors is not None:
+        test_get_batch_method_instance = create_get_batch_method(c.test_priors)
     else:
-        raise ValueError(
-            "main_config.priors must be a list of PriorConfig objects or a single callable."
-        )
+        test_get_batch_method_instance = get_batch_method_instance
 
     current_extra_prior_kwargs_dict = {}
     if c.num_workers is not None:
@@ -133,6 +144,16 @@ def train(
 
     data_loader = actual_dataloader_class(
         get_batch_method=get_batch_method_instance,  # Use the constructed/resolved instance
+        num_steps=c.steps_per_epoch,
+        batch_size=c.batch_size,
+        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
+        device=device,  # Pass the torch device object
+        n_targets_per_input=c.n_targets_per_input,
+        **current_extra_prior_kwargs_dict,
+    )
+
+    test_data_loader = actual_dataloader_class(
+        get_batch_method=test_get_batch_method_instance,  # Use the constructed/resolved instance
         num_steps=c.steps_per_epoch,
         batch_size=c.batch_size,
         eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
@@ -207,6 +228,10 @@ def train(
                 f"Checkpoint file {c.train_state_dict_load_path} not found or load/save paths are identical and file doesn't exist. Starting from scratch."
             )
 
+    # set this before DDP
+    data_loader.model = model
+    test_data_loader.model = model
+
     if using_dist:
         print("Distributed training")
         model = torch.nn.parallel.DistributedDataParallel(
@@ -215,35 +240,17 @@ def train(
             output_device=rank,
             broadcast_buffers=False,
         )
-        data_loader.model = (
-            model.module
-        )  # use local model, should not use multi-gpu functionality..
-    else:
-        data_loader.model = model
 
     scaler = GradScaler() if c.train_mixed_precision else None
 
     # check that everything uses up-to-date APIs
     utils.check_compatibility(data_loader)
+    utils.check_compatibility(test_data_loader)
 
     total_loss = float("inf")
     total_positional_losses = float("inf")
     try:
-        # Initially test the epoch callback function only if starting from epoch 1
-        if epoch_callback is not None and rank == 0 and start_epoch == 1:
-            set_model_to(model, optimizer, "eval")
-            epoch_callback(
-                model, 0, data_loader=data_loader, scheduler=scheduler
-            )  # Call with epoch 0 for initial state
-
-        # Adjust epoch range based on start_epoch
-        epoch_iterator = (
-            range(start_epoch, c.epochs + 1)
-            if c.epochs is not None
-            else itertools.count(start_epoch)
-        )
-
-        for epoch in epoch_iterator:
+        for epoch in range(start_epoch, c.epochs + 1):
             epoch_start_time = time.time()
             try:
                 epoch_result = train_or_evaluate_epoch(
@@ -268,38 +275,46 @@ def train(
                 print("Invalid epoch encountered, skipping...")
                 print(e)
                 raise  # Re-raises the original exception with trace
-            if (
-                hasattr(data_loader, "validate")
-                and epoch % c.validation_period == 0
+            if c.validation_period is not None and (
+                (epoch % c.validation_period == 0)
+                or (epoch == c.epochs)
+                or (epoch == 1)
             ):
                 with torch.no_grad():
-                    val_score = data_loader.validate(model)
+                    test_data_loader.epoch_count = (
+                        epoch - 1
+                    )  # -1 because the data_loader.__iter__ increases before the epoch
+                    val_epoch_result = train_or_evaluate_epoch(
+                        c=c,
+                        model=model,
+                        optimizer=optimizer,
+                        dl=test_data_loader,
+                        device=device,
+                        scaler=None,
+                        criterion=criterion,
+                        rank=rank,
+                        using_dist=using_dist,
+                        training=False,
+                    )
+                    val_score_str = (
+                        f"| eval mean loss {val_epoch_result.loss:5.2f} "
+                    )
 
             else:
-                val_score = None
+                val_score_str = ""
 
             if c.verbose:
                 print("-" * 89)
                 print(
-                    f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {epoch_result.loss:5.2f} | "
-                    f"pos losses {','.join([f'{l:5.2f}' for l in epoch_result.positional_losses])}, lr {scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']}"
-                    f" data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f}"
-                    f" forward time {epoch_result.forward_time:5.2f}"
-                    f" nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f}"
-                    + (
-                        f"val score {val_score}"
-                        if val_score is not None
-                        else ""
-                    )
+                    f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {epoch_result.loss:5.2f} "
+                    f"{val_score_str}"
+                    f"| lr {scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']} "
+                    f"| data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f} "
+                    f"| forward time {epoch_result.forward_time:5.2f} "
+                    f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
                 )
                 print("-" * 89)
 
-            # stepping with wallclock time based scheduler
-            if epoch_callback is not None and rank == 0:
-                set_model_to(model, optimizer, "eval")
-                epoch_callback(
-                    model, epoch, data_loader=data_loader, scheduler=scheduler
-                )
             if scheduler is not None:
                 scheduler.step()
 

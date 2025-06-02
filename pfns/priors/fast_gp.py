@@ -155,7 +155,7 @@ def get_batch(batch_size, seq_len, num_features, device=default_device, hyperpar
         max_so_far = sample[:, :single_eval_pos].max(0).values
         sample[:, single_eval_pos:] = (sample[:, single_eval_pos:] > max_so_far).float()[:, single_eval_pos:]
 
-    return Batch(x=x, y=sample, target_y=target_sample, batch_first=True)
+    return Batch(x=x, y=sample, target_y=target_sample)
 
 def get_model_on_device(x,y,hyperparameters,device):
     model, likelihood = get_model(x, y, hyperparameters)

@@ -317,6 +317,43 @@ def torch_load(path):
     return loaded_things[path]
 
 
+def _compute_gamma_params(
+    mean: float | None = None,
+    std: float | None = None,
+    concentration: float | None = None,
+    rate: float | None = None,
+) -> tuple[float, float]:
+    """Helper function to compute gamma distribution parameters.
+    Either provide mean and std, or concentration and rate.
+
+    Args:
+        mean: Mean of the gamma distribution (if using mean/std parameterization)
+        std: Standard deviation of the gamma distribution (if using mean/std parameterization)
+        concentration: Shape/concentration parameter (α) of the gamma distribution
+        rate: Rate parameter (β) of the gamma distribution
+
+    Returns:
+        Tuple of (concentration, rate)
+    """
+    if concentration is not None and rate is not None:
+        return concentration, rate
+    elif mean is not None and std is not None:
+        # For Gamma distribution:
+        # mean = α/β
+        # variance = α/β² = std²
+        # Therefore:
+        # α = mean²/variance = (mean/std)²
+        # β = mean/variance = mean/(std²)
+        variance = std * std
+        concentration = mean * mean / variance
+        rate = mean / variance
+        return concentration, rate
+    else:
+        raise ValueError(
+            "Must provide either (mean, std) or (concentration, rate)"
+        )
+
+
 def get_model(x, y, hyperparameters: dict, sample=True):
     sample_from_path = hyperparameters.get("sample_from_extra_prior", None)
     device = x.device
@@ -334,16 +371,22 @@ def get_model(x, y, hyperparameters: dict, sample=True):
         ),
         "noise",
     )
-    lengthscale_prior = (
-        GammaPrior(
-            torch.tensor(hyperparameters["lengthscale_concentration"], device=device),
-            torch.tensor(hyperparameters["lengthscale_rate"], device=device),
-        )
-        if hyperparameters.get("lengthscale_concentration", None)
-        else UniformPrior(
-            torch.tensor(0.0, device=device), torch.tensor(1.0, device=device)
-        )
+
+    # Handle lengthscale prior parameters
+    lengthscale_concentration, lengthscale_rate = _compute_gamma_params(
+        mean=hyperparameters.get("lengthscale_mean", None),
+        std=hyperparameters.get("lengthscale_std", None),
+        concentration=hyperparameters.get("lengthscale_concentration", None),
+        rate=hyperparameters.get("lengthscale_rate", None),
     )
+
+    # print(f'{lengthscale_concentration=}, {lengthscale_rate=}')
+
+    lengthscale_prior = GammaPrior(
+        torch.tensor(lengthscale_concentration, device=device),
+        torch.tensor(lengthscale_rate, device=device),
+    )
+
     covar_module = gpytorch.kernels.MaternKernel(
         nu=3 / 2,
         ard_num_dims=num_features,
@@ -352,17 +395,24 @@ def get_model(x, y, hyperparameters: dict, sample=True):
             lengthscale_prior, device, sample_from_path
         ),
     )
-    # ORIG DIFF: orig lengthscale has no prior
-    # covar_module.register_prior("lengthscale_prior",
-    # UniformPrior(.000000001, 1.),
-    # GammaPrior(concentration=hyperparameters.get('lengthscale_concentration', 1.),
-    #           rate=hyperparameters.get('lengthscale_rate', .1)),
-    # skewness is controllled by concentration only, want somthing like concetration in [0.1,1.], rate around [.05,1] seems reasonable
-    # "lengthscale")
-    outputscale_prior = GammaPrior(
-        concentration=hyperparameters.get("outputscale_concentration", 0.5),
-        rate=hyperparameters.get("outputscale_rate", 1.0),
+
+    # Handle outputscale prior parameters
+    outputscale_concentration, outputscale_rate = _compute_gamma_params(
+        mean=hyperparameters.get("outputscale_mean", None),
+        std=hyperparameters.get("outputscale_std", None),
+        concentration=hyperparameters.get("outputscale_concentration", None),
+        rate=hyperparameters.get("outputscale_rate", None),
     )
+
+    # print(f'{outputscale_concentration=}, {outputscale_rate=}')
+
+    outputscale_prior = GammaPrior(
+        concentration=torch.tensor(outputscale_concentration, device=device),
+        rate=torch.tensor(outputscale_rate, device=device),
+    )
+
+    # print(f'{outputscale_prior.mean=}, {outputscale_prior.variance=}')
+
     covar_module = gpytorch.kernels.ScaleKernel(
         covar_module,
         outputscale_prior=outputscale_prior,
@@ -603,8 +653,8 @@ def get_batch(
                     sample = d.sample()  # bs_per_gp_s x T
                     if fix_to_range is None:
                         # for k, v in model.named_parameters(): print(k,v)
-                        samples.append(sample.transpose(0, 1))
-                        samples_wo_noise.append(sample_wo_noise.transpose(0, 1))
+                        samples.append(sample)
+                        samples_wo_noise.append(sample_wo_noise)
                         break
                     smaller_mask = sample < fix_to_range[0]
                     larger_mask = sample >= fix_to_range[1]
@@ -625,8 +675,8 @@ def get_batch(
                         :batch_size_per_gp_sample
                     ]
                     sample = sample[in_range_mask][:batch_size_per_gp_sample]
-                    samples.append(sample.transpose(0, 1))
-                    samples_wo_noise.append(sample_wo_noise.transpose(0, 1))
+                    samples.append(sample)
+                    samples_wo_noise.append(sample_wo_noise)
                     successful_sample = True
 
         if torch.rand(1).item() < 0.01:
@@ -635,14 +685,15 @@ def get_batch(
                 throwaway_share / (batch_size // batch_size_per_gp_sample),
             )
 
+        # print(f'{[s.shape for s in samples]=}, {x.shape=}')
+
         # print(f'took {time.time() - start}')
-        sample = torch.cat(samples, 1)[..., None].float()
-        sample_wo_noise = torch.cat(samples_wo_noise, 1)[..., None].float()
+        sample = torch.cat(samples, 0)[..., None].float()
+        sample_wo_noise = torch.cat(samples_wo_noise, 0)[..., None].float()
         x = x.view(-1, batch_size, seq_len, num_features)[0]
         # TODO think about enabling the line below
         # sample = sample - sample[0, :].unsqueeze(0).expand(*sample.shape)
-        x = x.transpose(0, 1)
-        assert x.shape[:2] == sample.shape[:2]
+        assert x.shape[:2] == sample.shape[:2], f"{x.shape} != {sample.shape}"
     return Batch(
         x=x.float(),
         y=sample,

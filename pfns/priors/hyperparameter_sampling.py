@@ -30,6 +30,7 @@ class DistributionConfig(BaseConfig):
             return math.exp(random.uniform(log_lower, log_upper))
         return random.uniform(self.lower, self.upper)
 
+
 @dataclass(frozen=True)
 class UniformFloatDistConfig(DistributionConfig):
     lower: float
@@ -256,7 +257,48 @@ class HyperparameterNormalizer(torch.nn.Module):
         self.to_be_encoded_hyperparameters = get_all_styled_hps(self.hyperparameters)
         self.num_hps = len(self.to_be_encoded_hyperparameters)
 
-    def forward(self, raw_hyperparameters):
+    def hyperparameters_dict_to_tensor(
+        self, raw_hyperparameters: dict
+    ) -> torch.Tensor:
+        """Convert a dictionary of hyperparameters to a tensor format.
+
+        Args:
+            raw_hyperparameters: Dictionary mapping hyperparameter names to their values
+
+        Returns:
+            torch.Tensor: A tensor containing the hyperparameter values in the correct order
+
+        Raises:
+            ValueError: If there are missing or unexpected hyperparameters
+        """
+        # Convert sets for comparison
+        expected_keys = set(self.to_be_encoded_hyperparameters)
+        provided_keys = set(raw_hyperparameters.keys())
+
+        # Check for missing and extra keys
+        missing_keys = expected_keys - provided_keys
+        extra_keys = provided_keys - expected_keys
+
+        if missing_keys or extra_keys:
+            error_msg = []
+            if missing_keys:
+                error_msg.append(
+                    f"Missing required hyperparameters: {missing_keys}"
+                )
+            if extra_keys:
+                error_msg.append(
+                    f"Unexpected hyperparameters provided: {extra_keys}"
+                )
+            raise ValueError(" AND ".join(error_msg))
+
+        # Convert dict to tensor format
+        values = [
+            raw_hyperparameters[hp]
+            for hp in self.to_be_encoded_hyperparameters
+        ]
+        return torch.tensor([values], dtype=torch.float32)
+
+    def forward(self, raw_hyperparameters: torch.Tensor):
         # Create output tensor with twice the number of features
         # First half for normalized values, second half for nan indicators
         encoded_x = torch.zeros(

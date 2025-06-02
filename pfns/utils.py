@@ -143,7 +143,12 @@ def get_default_device():
     """
     Functional version of default_device, very helpful with submitit.
     """
-    return "cuda:0" if torch.cuda.is_available() else "cpu:0"
+    if torch.cuda.is_available():
+        return f"cuda:{torch.cuda.current_device()}"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
 
 
 default_device = get_default_device()
@@ -295,7 +300,9 @@ def print_on_master_only(is_master):
 
     def print(*args, **kwargs):
         force = kwargs.pop("force", False)
-        if is_master or force:
+        if args and isinstance(args[0], str) and args[0].startswith("ALL"):
+            builtin_print(*args, **kwargs)
+        elif is_master or force:
             builtin_print(*args, **kwargs)
 
     __builtin__.print = print
@@ -332,7 +339,7 @@ def init_dist(device):
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = "12355"
         torch.cuda.set_device(rank)
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
+        # os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
         print("distributed submitit launch and my rank is", rank)
         torch.distributed.init_process_group(
             backend="nccl",
@@ -419,12 +426,33 @@ def get_all_times(j):
 def get_all_losses(j):
     if stdout := j.stdout():
         try:
-            return [float(v) for v in re.findall("mean loss (.*) \|", stdout)]
+            return [
+                float(v)
+                for v in re.findall(r"\|[ ]+mean loss[ ]+(\S+)[ ]+\|", stdout)
+            ]
         except Exception as e:
             print("could not get losses from stdout, because of ", e)
             print(stdout)
             raise e
     return None
+
+
+def get_all_eval_losses(j):
+    if stdout := j.stdout():
+        try:
+            # Find all epoch numbers and eval losses
+            matches = re.findall(
+                r"\| end of epoch\s+(\d+).*?\| eval mean loss[ ]+(\S+)", stdout
+            )
+            if matches:
+                # Split into two lists - epochs and losses
+                epochs, losses = zip(*matches)
+                return [int(e) for e in epochs], [float(l) for l in losses]
+        except Exception as e:
+            print("could not get eval losses from stdout, because of ", e)
+            print(stdout)
+            raise e
+    return [], []
 
 
 def average_multiple_epochs(stdout, last_k=100):

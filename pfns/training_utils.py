@@ -9,7 +9,6 @@ from torch import nn
 
 class EpochResult(tp.NamedTuple):
     loss: float  # total loss for the epoch
-    positional_losses: list  # list of losses per position
     data_time: float  # time spent getting batch data
     forward_time: float  # time spent in forward pass
     step_time: float  # total time per step
@@ -22,8 +21,6 @@ class EpochResult(tp.NamedTuple):
 class Metrics:
     steps_per_epoch: int
     total_loss: float = 0.0
-    total_positional_losses: float | torch.Tensor = 0.0
-    total_positional_losses_recorded: float | torch.Tensor = 0
     nan_steps: float = 0.0
     ignore_steps: float = 0.0
     forward_time: float = 0.0
@@ -34,9 +31,6 @@ class Metrics:
     def update(
         self,
         loss: torch.Tensor,
-        losses: torch.Tensor,
-        single_eval_pos: int | None,
-        seq_len: int,
         nan_share: float,
         targets: torch.Tensor,
         forward_time: float,
@@ -44,20 +38,6 @@ class Metrics:
         time_to_get_batch: float,
     ):
         self.total_loss += loss.cpu().detach().item()
-        self.total_positional_losses += (
-            losses.mean(1).cpu().detach()
-            if single_eval_pos is None
-            else nn.functional.one_hot(torch.tensor(single_eval_pos), seq_len)
-            * utils.torch_nanmean(losses[: seq_len - single_eval_pos].mean(0))
-            .cpu()
-            .detach()
-        )
-
-        self.total_positional_losses_recorded += (
-            torch.ones(seq_len)
-            if single_eval_pos is None
-            else nn.functional.one_hot(torch.tensor(single_eval_pos), seq_len)
-        )
 
         self.nan_steps += nan_share
         self.ignore_steps += (targets == -100).float().mean()
@@ -68,10 +48,6 @@ class Metrics:
     def get_epoch_result(self, importance_sampling_infos: list[tuple]):
         return EpochResult(
             loss=self.total_loss / self.steps_per_epoch,
-            positional_losses=(
-                self.total_positional_losses
-                / self.total_positional_losses_recorded
-            ).tolist(),
             data_time=self.time_to_get_batch / self.steps_per_epoch,
             forward_time=self.forward_time / self.steps_per_epoch,
             step_time=self.step_time / self.steps_per_epoch,

@@ -11,8 +11,19 @@ class OptimizerConfig(base_config.BaseConfig):
     lr: float | None
     weight_decay: float = 0.0
     frequency_of_heavy_lifting: int | None = None
+    optim_warmup_steps: int = 0
 
     def create_optimizer(self, model_parameters):
+        if self.optim_warmup_steps > 0:
+            assert (
+                self.optimizer == "sf_adamw"
+            ), "warmup_steps is only supported for sf_adamw"
+
+        if self.frequency_of_heavy_lifting is not None:
+            assert (
+                self.optimizer == "shampoo"
+            ), "frequency_of_heavy_lifting is only supported for shampoo"
+
         if self.optimizer == "adam":
             return torch.optim.Adam(
                 model_parameters, lr=self.lr, weight_decay=self.weight_decay
@@ -28,6 +39,7 @@ class OptimizerConfig(base_config.BaseConfig):
                 model_parameters,
                 lr=self.lr,
                 weight_decay=self.weight_decay,
+                warmup_steps=self.optim_warmup_steps,
             )
         elif self.optimizer == "shampoo":
             from optimizers.distributed_shampoo import (

@@ -11,15 +11,16 @@ from dataclasses import dataclass
 
 import einops
 import torch
-from pfns.model.transformer_config import TransformerConfig
-from pfns.optimizer import OptimizerConfig
 from torch import nn
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
 from . import base_config, utils
-from .priors import prior, utils as priors_utils
-from .priors.batch_shape_samplers import BatchShapeSamplerConfig
+from .batch_shape_sampler import BatchShapeSamplerConfig
+from .model.transformer_config import TransformerConfig
+from .optimizer import OptimizerConfig
+
+from .priors import data_loading, prior, utils as priors_utils
 
 from .training_utils import (
     Metrics,
@@ -44,7 +45,6 @@ class MainConfig(base_config.BaseConfig):
     batch_shape_sampler: BatchShapeSamplerConfig
     epochs: int = 10
     steps_per_epoch: int = 100
-    batch_size: int = 200
     aggregate_k_gradients: int = 1
     n_targets_per_input: int = 1
     train_mixed_precision: bool = True
@@ -91,15 +91,11 @@ def train(
     if device is None:
         device = default_device
     using_dist, rank, device = init_dist(device)
-    print(f"Using device {device}.")
-
-    # Resolve single_eval_pos_gen, todo make ready for multi gpu by including step info
-    eval_pos_seq_len_sampler = c.batch_shape_sampler.sample
-    print(eval_pos_seq_len_sampler)
+    print(f"ALL: Using device {device}.")
 
     # Resolve dataloader_class string to actual class
     if c.dataloader_class is None:
-        actual_dataloader_class = priors_utils.StandardDataLoader
+        actual_dataloader_class = data_loading.StandardDataLoader
     else:
         parts = c.dataloader_class.split(".")
         module_path = ".".join(parts[:-1])
@@ -144,21 +140,21 @@ def train(
 
     data_loader = actual_dataloader_class(
         get_batch_method=get_batch_method_instance,  # Use the constructed/resolved instance
+        batch_shape_sampler_function=c.batch_shape_sampler.sample_batch_shape,
         num_steps=c.steps_per_epoch,
-        batch_size=c.batch_size,
-        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
         device=device,  # Pass the torch device object
         n_targets_per_input=c.n_targets_per_input,
+        persistent_workers=True,  # can have persistent workers, as the dataset is counting the epochs itself here
         **current_extra_prior_kwargs_dict,
     )
 
     test_data_loader = actual_dataloader_class(
         get_batch_method=test_get_batch_method_instance,  # Use the constructed/resolved instance
+        batch_shape_sampler_function=c.batch_shape_sampler.sample_batch_shape,
         num_steps=c.steps_per_epoch,
-        batch_size=c.batch_size,
-        eval_pos_seq_len_sampler=eval_pos_seq_len_sampler,
         device=device,  # Pass the torch device object
         n_targets_per_input=c.n_targets_per_input,
+        persistent_workers=False,  # can't have persistent workers, otherwise the epoch count is not updated
         **current_extra_prior_kwargs_dict,
     )
 
@@ -248,7 +244,6 @@ def train(
     utils.check_compatibility(test_data_loader)
 
     total_loss = float("inf")
-    total_positional_losses = float("inf")
     try:
         for epoch in range(start_epoch, c.epochs + 1):
             epoch_start_time = time.time()
@@ -266,7 +261,6 @@ def train(
                     training=True,
                 )
                 total_loss = epoch_result.loss
-                total_positional_losses = epoch_result.positional_losses
                 data_loader.importance_sampling_infos = (
                     epoch_result.importance_sampling_infos
                 )
@@ -307,11 +301,16 @@ def train(
                 print("-" * 89)
                 print(
                     f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {epoch_result.loss:5.2f} "
-                    f"{val_score_str}"
-                    f"| lr {scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']} "
-                    f"| data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f} "
-                    f"| forward time {epoch_result.forward_time:5.2f} "
-                    f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
+                    + f"{val_score_str}"
+                    + f"| lr {scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']} "
+                    + f"| data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f} "
+                    + f"forward time {epoch_result.forward_time:5.2f} "
+                    + (
+                        f"| max gpu mem {torch.cuda.max_memory_allocated()/1024/1024/1024:.2f}GiB "
+                        if device.startswith("cuda")
+                        else ""
+                    )
+                    + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
                 )
                 print("-" * 89)
 
@@ -339,7 +338,6 @@ def train(
             data_loader = None
         return {
             "total_loss": total_loss,
-            "total_positional_losses": total_positional_losses,
             "model": model.to("cpu"),
             "data_loader": data_loader,
             "total_time": time.time() - total_start_time,
@@ -386,12 +384,9 @@ def train_or_evaluate_epoch(
 
     for batch_index, batch in enumerate(dl):
         batch: prior.Batch = batch  # for IDE support
-        assert (
-            c.batch_size == len(batch.x) == len(batch.y) == len(batch.target_y)
-        ), "Our code was updated to use the more intuitive batch first format, please make sure your get_batch function returns data with shapes (batch_size, seq_len, ...)"
-        if not model.attention_between_features:
+        if not c.model.attention_between_features:
             assert (
-                model.features_per_group == batch.x.shape[2]
+                c.model.features_per_group == batch.x.shape[2]
             ), "features_per_group must match the number of features in the input, if attention_between_features is False"
         targets = batch.target_y.to(device)
         single_eval_pos = batch.single_eval_pos
@@ -510,9 +505,6 @@ def train_or_evaluate_epoch(
 
                 metrics.update(
                     loss=loss,
-                    losses=losses,
-                    single_eval_pos=single_eval_pos,
-                    seq_len=seq_len,
                     nan_share=nan_share,
                     targets=targets,
                     forward_time=forward_time,

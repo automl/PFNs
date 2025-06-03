@@ -20,7 +20,7 @@ Check out our [tutorial](https://colab.research.google.com/drive/12YpI99LkuFeWcu
 ### Install with pip
 
 This way of installing allows you to use the package everywhere and still be able to edit files.
-You should use a python version **>=3.10 and <=3.11**.
+You should use a pytorch compatible python version, of they don't support the latest version.
 ```bash
 git clone https://github.com/automl/PFNs.git
 cd PFNs

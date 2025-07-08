@@ -4,8 +4,6 @@
 
 # It includes batch_size, seq_len, num_features, and single_eval_pos.
 
-import dataclasses
-
 import random
 from dataclasses import dataclass
 from typing import Optional
@@ -45,9 +43,7 @@ class BatchShapeSamplerConfig(BaseConfig):
         rng = random.Random(seed)
 
         # it seems to be beneficial to oversample small numbers of features
-        num_features = rng.randint(
-            self.min_num_features, self.max_num_features
-        )
+        num_features = rng.randint(self.min_num_features, self.max_num_features)
 
         single_eval_pos = rng.randint(
             0,

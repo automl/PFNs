@@ -82,7 +82,6 @@ class EncoderConfig(base_config.BaseConfig):
             encoder_sequence.append(
                 InputNormalizationEncoderStep(
                     normalize_on_train_only=True,
-                    normalize_to_ranking=False,
                     normalize_x=True,
                     remove_outliers=True,
                 )
@@ -145,8 +144,8 @@ class StyleEncoderConfig(base_config.BaseConfig):
             )
 
 
-### Custom Encoders
-### These encoders are meant to be used for both x and y
+# Custom Encoders
+# These encoders are meant to be used for both x and y
 
 
 class SequentialEncoder(nn.Sequential):
@@ -156,9 +155,7 @@ class SequentialEncoder(nn.Sequential):
     The steps are worked off one after another, writing back the results into a dict.
     """
 
-    def __init__(
-        self, *args: SeqEncStep, output_key: str = "output", **kwargs: Any
-    ):
+    def __init__(self, *args: SeqEncStep, output_key: str = "output", **kwargs: Any):
         """Initialize the SequentialEncoder.
 
         Args:
@@ -308,9 +305,7 @@ class SeqEncStep(nn.Module):
 
         assert isinstance(out, tuple)
         assert len(out) == len(self.out_keys)
-        state.update(
-            {out_key: out[i] for i, out_key in enumerate(self.out_keys)}
-        )
+        state.update({out_key: out[i] for i, out_key in enumerate(self.out_keys)})
         return state
 
 
@@ -345,9 +340,7 @@ class LinearInputEncoderStep(SeqEncStep):
         """Fit the encoder step. Does nothing for LinearInputEncoderStep."""
         pass
 
-    def _transform(
-        self, *x: torch.Tensor, **kwargs: Any
-    ) -> tuple[torch.Tensor]:
+    def _transform(self, *x: torch.Tensor, **kwargs: Any) -> tuple[torch.Tensor]:
         """Apply the linear transformation to the input.
 
         Args:
@@ -394,23 +387,8 @@ class SqueezeBetween0and1(nn.Module):  # take care of test set here
     def forward(self, x):
         width = x.max(0).values - x.min(0).values
         result = (x - x.min(0).values) / width
-        result[
-            (width == 0)[None].repeat(len(x), *[1] * (len(x.shape) - 1))
-        ] = 0.5
+        result[(width == 0)[None].repeat(len(x), *[1] * (len(x.shape) - 1))] = 0.5
         return result
-
-
-def get_normalized_uniform_encoder(encoder_creator):
-    """
-    This can be used to wrap an encoder that is fed uniform samples in [0,1] and normalizes these to 0 mean and 1 std.
-    For example, it can be used as `encoder_creator = get_normalized_uniform_encoder(encoders.Linear)`, now this can
-    be initialized with `encoder_creator(feature_dim, in_dim)`.
-    :param encoder:
-    :return:
-    """
-    return lambda in_dim, out_dim: nn.Sequential(
-        Normalize(0.5, math.sqrt(1 / 12)), encoder_creator(in_dim, out_dim)
-    )
 
 
 class NanHandlingEncoderStep(SeqEncStep):
@@ -433,18 +411,12 @@ class NanHandlingEncoderStep(SeqEncStep):
             in_keys: The keys of the input tensors. Must be a single key.
             out_keys: The keys to assign the output tensors to.
         """
-        assert (
-            len(in_keys) == 1
-        ), "NanHandlingEncoderStep expects a single input key"
+        assert len(in_keys) == 1, "NanHandlingEncoderStep expects a single input key"
         super().__init__(in_keys, out_keys)
         self.keep_nans = keep_nans
-        self.register_buffer(
-            "feature_means_", torch.tensor([]), persistent=False
-        )
+        self.register_buffer("feature_means_", torch.tensor([]), persistent=False)
 
-    def _fit(
-        self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any
-    ) -> None:
+    def _fit(self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any) -> None:
         """Compute the feature means on the training set for replacing NaNs.
 
         Args:
@@ -529,9 +501,7 @@ class VariableNumFeaturesEncoderStep(SeqEncStep):
             min=1,
         ).cpu()
 
-    def _transform(
-        self, x: torch.Tensor, **kwargs: Any
-    ) -> tuple[torch.Tensor]:
+    def _transform(self, x: torch.Tensor, **kwargs: Any) -> tuple[torch.Tensor]:
         """Transform the input tensor to have a fixed number of features.
 
         Args:
@@ -553,14 +523,10 @@ class VariableNumFeaturesEncoderStep(SeqEncStep):
             if self.normalize_by_sqrt:
                 # Verified that this gives indeed unit variance with appended zeros
                 x = x * torch.sqrt(
-                    self.num_features
-                    / self.number_of_used_features_.to(x.device),
+                    self.num_features / self.number_of_used_features_.to(x.device),
                 )
             else:
-                x = x * (
-                    self.num_features
-                    / self.number_of_used_features_.to(x.device)
-                )
+                x = x * (self.num_features / self.number_of_used_features_.to(x.device))
 
         zeros_appended = torch.zeros(
             *x.shape[:-1],
@@ -582,7 +548,6 @@ class InputNormalizationEncoderStep(SeqEncStep):
     def __init__(
         self,
         normalize_on_train_only: bool,
-        normalize_to_ranking: bool,
         normalize_x: bool,
         remove_outliers: bool,
         remove_outliers_sigma: float = 4.0,
@@ -593,7 +558,6 @@ class InputNormalizationEncoderStep(SeqEncStep):
 
         Args:
             normalize_on_train_only: Whether to compute normalization only on the training set.
-            normalize_to_ranking: Whether to normalize the input to a ranking.
             normalize_x: Whether to normalize the input to have unit variance.
             remove_outliers: Whether to remove outliers from the input.
             remove_outliers_sigma: The number of standard deviations to use for outlier removal.
@@ -602,7 +566,6 @@ class InputNormalizationEncoderStep(SeqEncStep):
         """
         super().__init__(**kwargs)
         self.normalize_on_train_only = normalize_on_train_only
-        self.normalize_to_ranking = normalize_to_ranking
         self.normalize_x = normalize_x
         self.remove_outliers = remove_outliers
         self.remove_outliers_sigma = remove_outliers_sigma
@@ -616,9 +579,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
     def reset_seed(self) -> None:
         """Reset the random seed."""
 
-    def _fit(
-        self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any
-    ) -> None:
+    def _fit(self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any) -> None:
         """Compute the normalization statistics on the training set.
 
         Args:
@@ -626,10 +587,8 @@ class InputNormalizationEncoderStep(SeqEncStep):
             single_eval_pos: The position to use for single evaluation.
             **kwargs: Additional keyword arguments (unused).
         """
-        normalize_position = (
-            single_eval_pos if self.normalize_on_train_only else -1
-        )
-        if self.remove_outliers and not self.normalize_to_ranking:
+        normalize_position = single_eval_pos if self.normalize_on_train_only else -1
+        if self.remove_outliers:
             (
                 x,
                 (
@@ -671,15 +630,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
         Returns:
             A tuple containing the normalized tensor.
         """
-        normalize_position = (
-            single_eval_pos if self.normalize_on_train_only else -1
-        )
-
-        if self.normalize_to_ranking:
-            raise AssertionError(
-                "Not implemented currently as it was not used in a long time and hard to move out the state.",
-            )
-            x = to_ranking_low_mem(x)
+        normalize_position = single_eval_pos if self.normalize_on_train_only else -1
 
         if self.remove_outliers:
             assert (
@@ -730,9 +681,7 @@ def torch_nanmean(
     if include_inf:
         nan_mask = torch.logical_or(nan_mask, torch.isinf(x))
 
-    num = torch.where(
-        nan_mask, torch.full_like(x, 0), torch.full_like(x, 1)
-    ).sum(  # type: ignore
+    num = torch.where(nan_mask, torch.full_like(x, 0), torch.full_like(x, 1)).sum(  # type: ignore
         axis=axis,
     )
     value = torch.where(nan_mask, torch.full_like(x, 0), x).sum(axis=axis)  # type: ignore
@@ -742,14 +691,10 @@ def torch_nanmean(
 
 
 def torch_nanstd(x: torch.Tensor, axis: int = 0):
-    num = torch.where(
-        torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)
-    ).sum(  # type: ignore
+    num = torch.where(torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)).sum(  # type: ignore
         axis=axis,
     )
-    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(
-        axis=axis
-    )  # type: ignore
+    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(axis=axis)  # type: ignore
     mean = value / num
     mean_broadcast = torch.repeat_interleave(
         mean.unsqueeze(axis),
@@ -856,9 +801,7 @@ def remove_outliers(
     upper: None | torch.Tensor = None,
 ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
     # Expects T, B, H
-    assert (lower is None) == (
-        upper is None
-    ), "Either both or none of lower and upper"
+    assert (lower is None) == (upper is None), "Either both or none of lower and upper"
     assert len(X.shape) == 3, "X must be T,B,H"
     # for b in range(X.shape[1]):
     # for col in range(X.shape[2]):
@@ -872,9 +815,7 @@ def remove_outliers(
         cut_off = data_std * n_sigma
         lower, upper = data_mean - cut_off, data_mean + cut_off
 
-        data_clean[
-            torch.logical_or(data_clean > upper, data_clean < lower)
-        ] = np.nan
+        data_clean[torch.logical_or(data_clean > upper, data_clean < lower)] = np.nan
         data_mean, data_std = (
             torch_nanmean(data_clean, axis=0),
             torch_nanstd(data_clean, axis=0),

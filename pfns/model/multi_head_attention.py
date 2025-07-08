@@ -107,9 +107,7 @@ class MultiHeadAttention(torch.nn.Module):
             w_qkv is None and w_kv is None and w_k is None and w_v is None
         )
         assert (w_qkv is None) != (w_q is None)
-        assert (w_qkv is None) or (
-            w_kv is None and w_k is None and w_v is None
-        )
+        assert (w_qkv is None) or (w_kv is None and w_k is None and w_v is None)
         assert w_kv is None or (w_k is None and w_v is None)
         assert (w_k is None) == (w_v is None)
 
@@ -126,15 +124,9 @@ class MultiHeadAttention(torch.nn.Module):
                 if expected_dim is not None:
                     assert actual_dim == expected_dim, err
 
-        assert_tensor_shape(
-            precomputed_k, [None, None, self._nhead_kv, self._d_k]
-        )
-        assert_tensor_shape(
-            precomputed_v, [None, None, self._nhead_kv, self._d_v]
-        )
-        assert_tensor_shape(
-            precomputed_kv, [None, None, 2, self._nhead_kv, self._d_k]
-        )
+        assert_tensor_shape(precomputed_k, [None, None, self._nhead_kv, self._d_k])
+        assert_tensor_shape(precomputed_v, [None, None, self._nhead_kv, self._d_v])
+        assert_tensor_shape(precomputed_kv, [None, None, 2, self._nhead_kv, self._d_k])
         assert_tensor_shape(
             w_q,
             [
@@ -145,12 +137,8 @@ class MultiHeadAttention(torch.nn.Module):
         )
         assert_tensor_shape(w_k, [self._nhead_kv, self._d_k, self._input_size])
         assert_tensor_shape(w_v, [self._nhead_kv, self._d_v, self._input_size])
-        assert_tensor_shape(
-            w_kv, [2, self._nhead_kv, self._d_k, self._input_size]
-        )
-        assert_tensor_shape(
-            w_qkv, [3, self._nhead, self._d_k, self._input_size]
-        )
+        assert_tensor_shape(w_kv, [2, self._nhead_kv, self._d_k, self._input_size])
+        assert_tensor_shape(w_qkv, [3, self._nhead, self._d_k, self._input_size])
         assert_tensor_shape(w_out, [self._nhead, self._d_v, self._output_size])
 
         self.register_parameter("_w_out", w_out)
@@ -222,20 +210,14 @@ class MultiHeadAttention(torch.nn.Module):
         else:
             torch.nn.init.xavier_uniform_(w_out)
 
-        assert precomputed_k is None == precomputed_v is None
-        has_precomputed_kv = (
-            precomputed_kv is not None or precomputed_k is not None
-        )
+        assert (precomputed_k is None) == (precomputed_v is None)
+        has_precomputed_kv = precomputed_kv is not None or precomputed_k is not None
         w_q = None
         w_k = None
         w_v = None
         w_kv = None
         w_qkv = None
-        if (
-            d_k == d_v
-            and self._nhead == self._nhead_kv
-            and not has_precomputed_kv
-        ):
+        if d_k == d_v and self._nhead == self._nhead_kv and not has_precomputed_kv:
             w_qkv = self.newly_initialized_input_weight(
                 [3, self._nhead, self._d_k, self._input_size],
                 nhead=self._nhead,
@@ -286,9 +268,7 @@ class MultiHeadAttention(torch.nn.Module):
             precomputed_kv,
         )
         if recompute:
-            self.forward = partial(
-                checkpoint, self.forward, use_reentrant=False
-            )  # type: ignore
+            self.forward = partial(checkpoint, self.forward, use_reentrant=False)  # type: ignore
 
     @override
     def forward(
@@ -322,9 +302,7 @@ class MultiHeadAttention(torch.nn.Module):
         assert not x.requires_grad or (
             not self.has_cached_kv and not cache_kv
         ), "Saving keys and values is only supported during inference."
-        x, x_kv, x_shape_after_transpose = (
-            self._rearrange_inputs_to_flat_batch(x, x_kv)
-        )
+        x, x_kv, x_shape_after_transpose = self._rearrange_inputs_to_flat_batch(x, x_kv)
 
         nhead_kv = 1 if reuse_first_head_kv else self._nhead_kv
 
@@ -613,9 +591,7 @@ class MultiHeadAttention(torch.nn.Module):
                 nvidia_compute_capability = f"{capability[0]}.{capability[1]}"
             else:
                 nvidia_compute_capability = None
-            USE_TORCH_2_GQA = (
-                nvidia_compute_capability >= "8" and TORCH_2_SUPPORTS_GQ
-            )
+            USE_TORCH_2_GQA = nvidia_compute_capability >= "8" and TORCH_2_SUPPORTS_GQ
 
             # TODO: add logging for something like this
             # if use_flash_attention and USE_TORCH_2_GQA:
@@ -728,12 +704,8 @@ class MultiHeadAttention(torch.nn.Module):
             )
             attention_head_outputs = attention_head_outputs.transpose(1, 2)
         else:
-            k = MultiHeadAttention.broadcast_kv_across_heads(
-                k, share_kv_across_n_heads
-            )
-            v = MultiHeadAttention.broadcast_kv_across_heads(
-                v, share_kv_across_n_heads
-            )
+            k = MultiHeadAttention.broadcast_kv_across_heads(k, share_kv_across_n_heads)
+            v = MultiHeadAttention.broadcast_kv_across_heads(v, share_kv_across_n_heads)
             logits = torch.einsum("b q h d, b k h d -> b q k h", q, k)
             logits *= (
                 torch.sqrt(torch.tensor(1.0 / d_k)).to(k.device)
@@ -742,9 +714,7 @@ class MultiHeadAttention(torch.nn.Module):
             )
             ps = torch.softmax(logits, dim=2)
             ps = torch.dropout(ps, dropout_p, train=True)
-            attention_head_outputs = torch.einsum(
-                "b q k h, b k h d -> b q h d", ps, v
-            )
+            attention_head_outputs = torch.einsum("b q k h, b k h d -> b q h d", ps, v)
 
         return attention_head_outputs.reshape(
             batch_size,

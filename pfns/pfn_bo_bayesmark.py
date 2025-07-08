@@ -9,7 +9,7 @@ from bayesmark.experiment import experiment_main
 from bayesmark.space import JointSpace
 from scipy.special import expit, logit
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 
 # from scipy.stats import qmc
 from torch.quasirandom import SobolEngine
@@ -48,7 +48,7 @@ class PFNOptimizer(AbstractOptimizer):
         api_config : dict-like of dict-like
             Configuration of the optimization variables. See API description.
         """
-        assert not "fit_encoder" in acqf_kwargs
+        assert "fit_encoder" not in acqf_kwargs
         AbstractOptimizer.__init__(self, api_config)
         # Do whatever other setup is needed
         # ...
@@ -65,9 +65,7 @@ class PFNOptimizer(AbstractOptimizer):
 
         self.X = []
         self.y = []
-        self.api_config = {
-            key: value for key, value in sorted(api_config.items())
-        }
+        self.api_config = {key: value for key, value in sorted(api_config.items())}
         self.hp_names = list(self.api_config.keys())
         # self.model.encoder.num_features = 18
 
@@ -162,8 +160,7 @@ class PFNOptimizer(AbstractOptimizer):
             # temp_guess = sampler.random_base2(m=len(self.max_values))
             temp_guess = self.sobol.draw(1).numpy()[0]
             temp_guess = (
-                temp_guess * (self.max_values - self.min_values)
-                + self.min_values
+                temp_guess * (self.max_values - self.min_values) + self.min_values
             )
 
             x_guess = {}
@@ -189,17 +186,13 @@ class PFNOptimizer(AbstractOptimizer):
             x_guess = np.round(
                 x_guess, self.round_suggests_to
             )  # make sure very similar values are actually the same
-        x_guess = (
-            x_guess * (self.max_values - self.min_values) + self.min_values
-        )
+        x_guess = x_guess * (self.max_values - self.min_values) + self.min_values
         x_guess = x_guess.tolist()
         return self.transform_inverse(x_guess)
 
     def min_max_encode(self, temp_X):
         # this, combined with transform is the inverse of transform_back
-        temp_X = (temp_X - self.min_values) / (
-            self.max_values - self.min_values
-        )
+        temp_X = (temp_X - self.min_values) / (self.max_values - self.min_values)
         temp_X = torch.tensor(temp_X).to(torch.float32)
         temp_X = torch.clamp(temp_X, min=0.0, max=1.0)
         return temp_X
@@ -228,9 +221,7 @@ class PFNOptimizer(AbstractOptimizer):
         try:
             num_initial_design = max(len(self.bounds), self.min_initial_design)
             if self.max_initial_design is not None:
-                num_initial_design = min(
-                    num_initial_design, self.max_initial_design
-                )
+                num_initial_design = min(num_initial_design, self.max_initial_design)
             if len(self.X) < num_initial_design:
                 if len(self.X) == 0 and self.fixed_initial_guess is not None:
                     x_guess = [
@@ -260,14 +251,11 @@ class PFNOptimizer(AbstractOptimizer):
                 temp_y = torch.tensor(temp_y).to(torch.float32)
                 if (
                     self.rand_sugg_after_x_steps_of_stagnation is not None
-                    and len(self.y)
-                    > self.rand_sugg_after_x_steps_of_stagnation
+                    and len(self.y) > self.rand_sugg_after_x_steps_of_stagnation
                     and not self.rand_prev
                 ):
                     if (
-                        temp_y[
-                            : -self.rand_sugg_after_x_steps_of_stagnation
-                        ].max()
+                        temp_y[: -self.rand_sugg_after_x_steps_of_stagnation].max()
                         == temp_y.max()
                     ):
                         print(
@@ -294,9 +282,8 @@ class PFNOptimizer(AbstractOptimizer):
                 temp_X = temp_X.to(self.device)
                 temp_y = temp_y.to(self.device)
 
-                if (
-                    self.fit_encoder_from_step
-                    and self.fit_encoder_from_step <= len(self.X)
+                if self.fit_encoder_from_step and self.fit_encoder_from_step <= len(
+                    self.X
                 ):
                     with torch.enable_grad():
                         w = tune_input_warping.fit_input_warping(
@@ -314,8 +301,7 @@ class PFNOptimizer(AbstractOptimizer):
                                 n, temp_X_warped.shape[1], device="cpu"
                             )
                             back_transformed_samples = [
-                                self.transform_back(sample)
-                                for sample in pre_samples
+                                self.transform_back(sample) for sample in pre_samples
                             ]
                             samples = np.array(
                                 [
@@ -330,9 +316,7 @@ class PFNOptimizer(AbstractOptimizer):
                             rand_sample_func = rand_sample_func
                             # dims with bool or int are not continuous, thus no gradient opt is applied
                             dims_wo_gradient_opt = [
-                                i
-                                for i, t in enumerate(self.types)
-                                if t != "real"
+                                i for i, t in enumerate(self.types) if t != "real"
                             ]
                         else:
                             rand_sample_func = None
@@ -373,9 +357,7 @@ class PFNOptimizer(AbstractOptimizer):
                             "Optimizer not recognized, set `acqf_optimizer_name` to 'lbfgs' or 'adam'"
                         )
 
-                back_transformed_x_options = [
-                    self.transform_back(x) for x in x_options
-                ]
+                back_transformed_x_options = [self.transform_back(x) for x in x_options]
                 opt_X = np.array(
                     [
                         self.transform(deepcopy(transformed_x_options))
@@ -383,9 +365,7 @@ class PFNOptimizer(AbstractOptimizer):
                     ]
                 )
                 opt_X = self.min_max_encode(opt_X)
-                opt_new = ~(opt_X[:, None] == temp_X[None].cpu()).all(-1).any(
-                    1
-                )
+                opt_new = ~(opt_X[:, None] == temp_X[None].cpu()).all(-1).any(1)
                 for i, x in enumerate(opt_X):
                     if opt_new[i]:
                         if self.verbose:
@@ -395,9 +375,7 @@ class PFNOptimizer(AbstractOptimizer):
                         self.rand_prev = False
                         return [back_transformed_x_options[i]]
                 print("backup from initial rand search")
-                back_transformed_x_options = [
-                    self.transform_back(x) for x in x_rs
-                ]
+                back_transformed_x_options = [self.transform_back(x) for x in x_rs]
                 opt_X = np.array(
                     [
                         self.transform(deepcopy(transformed_x_options))
@@ -405,9 +383,7 @@ class PFNOptimizer(AbstractOptimizer):
                     ]
                 )
                 opt_X = self.min_max_encode(opt_X)
-                opt_new = ~(opt_X[:, None] == temp_X[None].cpu()).all(-1).any(
-                    1
-                )
+                opt_new = ~(opt_X[:, None] == temp_X[None].cpu()).all(-1).any(1)
                 for i, x in enumerate(opt_X):
                     if opt_new[i]:
                         if self.verbose:
@@ -478,11 +454,7 @@ class PFNOptimizer(AbstractOptimizer):
 
 
 def test():
-    from bayesmark.experiment import (
-        _build_test_problem,
-        OBJECTIVE_NAMES,
-        run_study,
-    )
+    from bayesmark.experiment import _build_test_problem, OBJECTIVE_NAMES, run_study
 
     # function_instance = _build_test_problem(model_name='ada', dataset='breast', scorer='nll', path=None)
     function_instance = _build_test_problem(
@@ -491,9 +463,6 @@ def test():
 
     # Setup optimizer
     api_config = function_instance.get_api_config()
-    import os
-
-    # check is file
 
     config = {
         "pfn_file": "final_models/model_hebo_morebudget_9_unused_features_3.pt",
@@ -521,9 +490,7 @@ if __name__ == "__main__":
     import uuid
 
     import bayesmark.cmd_parse as cmd
-    import bayesmark.constants as cc
     from bayesmark.cmd_parse import CmdArgs
-    from bayesmark.serialize import XRSerializer
 
     description = "Run a study with one benchmark function and an optimizer"
     args = cmd.parse_args(cmd.experiment_parser(description))

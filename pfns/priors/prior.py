@@ -41,9 +41,7 @@ class AdhocPriorConfig(PriorConfig):
                 if isinstance(self.prior_names, Sequence)
                 else [self.prior_names]
             ):
-                prior_module = importlib.import_module(
-                    f"pfns.priors.{prior_name}"
-                )
+                prior_module = importlib.import_module(f"pfns.priors.{prior_name}")
                 get_batch = getattr(prior_module, "get_batch")
                 get_batch_methods.append(get_batch)
         else:
@@ -53,9 +51,7 @@ class AdhocPriorConfig(PriorConfig):
                 else [self.get_batch_methods]
             )
 
-        return partial(
-            get_batch_sequence(*get_batch_methods), **self.prior_kwargs
-        )
+        return partial(get_batch_sequence(*get_batch_methods), **self.prior_kwargs)
 
 
 @dataclass
@@ -94,8 +90,7 @@ class Batch:
         return [
             f.name
             for f in fields(self)
-            if f.name not in set_of_attributes
-            and getattr(self, f.name) is not None
+            if f.name not in set_of_attributes and getattr(self, f.name) is not None
         ]
 
 
@@ -110,8 +105,7 @@ def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
     not_none_fields = [
         f.name
         for f in fields(batches[0])
-        if f.name not in ignore_attributes
-        and getattr(batches[0], f.name) is not None
+        if f.name not in ignore_attributes and getattr(batches[0], f.name) is not None
     ]
     assert all(
         [
@@ -135,7 +129,7 @@ def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
     }
     assert all(
         f in merge_funcs for f in not_none_fields
-    ), f"Unknown fields encountered in `safe_merge_batches_in_batch_dim`."
+    ), "Unknown fields encountered in `safe_merge_batches_in_batch_dim`."
     return Batch(
         **{
             f: merge_funcs[f]([getattr(batch, f) for batch in batches])

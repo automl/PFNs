@@ -14,9 +14,9 @@ repos:
         args: [format]
 
 # Maybe we add this later, but makes a lot of problems now
-# -   repo: https://github.com/pycqa/flake8
-#     rev: 7.0.0
-#     hooks:
-#     -   id: flake8
-#         additional_dependencies:
-#         - flake8-docstrings
+-   repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+    -   id: flake8
+        additional_dependencies:
+        - flake8-docstrings

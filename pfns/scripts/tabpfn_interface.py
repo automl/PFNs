@@ -1,7 +1,5 @@
-import io
 import os
 import pathlib
-import pickle
 import random
 from pathlib import Path
 
@@ -25,10 +23,7 @@ from sklearn.preprocessing import (
     RobustScaler,
 )
 from sklearn.utils import column_or_1d
-from sklearn.utils.multiclass import (
-    check_classification_targets,
-    unique_labels,
-)
+from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from torch.utils.checkpoint import checkpoint
@@ -60,7 +55,9 @@ def load_model_workflow(
         """
         Returns the different paths of model_file, model_path and results_file
         """
-        model_file = f"models_diff/prior_diff_real_checkpoint{add_name}_n_{i}_epoch_{e}.cpkt"
+        model_file = (
+            f"models_diff/prior_diff_real_checkpoint{add_name}_n_{i}_epoch_{e}.cpkt"
+        )
         model_path = os.path.join(base_path, model_file)
         # print('Evaluate ', model_path)
         results_file = os.path.join(
@@ -205,9 +202,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
 
         self.max_num_features = self.c["num_features"]
         self.max_num_classes = self.c["max_num_classes"]
-        self.differentiable_hps_as_style = self.c[
-            "differentiable_hps_as_style"
-        ]
+        self.differentiable_hps_as_style = self.c["differentiable_hps_as_style"]
 
         self.no_preprocess_mode = no_preprocess_mode
         self.feature_shift_decoder = feature_shift_decoder
@@ -299,20 +294,13 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         if self.no_grad:
             X = check_array(X, force_all_finite=False)
             X_full = np.concatenate([self.X_, X], axis=0)
-            X_full = (
-                torch.tensor(X_full, device=self.device).float().unsqueeze(1)
-            )
+            X_full = torch.tensor(X_full, device=self.device).float().unsqueeze(1)
         else:
             assert torch.is_tensor(self.X_) & torch.is_tensor(X), (
                 "If no_grad is false, this function expects X as "
                 "a tensor to calculate a gradient"
             )
-            X_full = (
-                torch.cat((self.X_, X), dim=0)
-                .float()
-                .unsqueeze(1)
-                .to(self.device)
-            )
+            X_full = torch.cat((self.X_, X), dim=0).float().unsqueeze(1).to(self.device)
 
             if int(torch.isnan(X_full).sum()):
                 print(
@@ -345,27 +333,20 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             batch_size_inference=self.batch_size_inference,
             **get_params_from_config(self.c),
         )
-        prediction_, y_ = (
+        prediction_, _y_ = (  # noqa: F841
             prediction.squeeze(0),
             y_full.squeeze(1).long()[eval_pos:],
         )
 
-        return (
-            prediction_.detach().cpu().numpy() if self.no_grad else prediction_
-        )
+        return prediction_.detach().cpu().numpy() if self.no_grad else prediction_
 
-    def predict(
-        self, X, return_winning_probability=False, normalize_with_test=False
-    ):
+    def predict(self, X, return_winning_probability=False, normalize_with_test=False):
         p = self.predict_proba(X, normalize_with_test=normalize_with_test)
         y = np.argmax(p, axis=-1)
         y = self.classes_.take(np.asarray(y, dtype=np.intp))
         if return_winning_probability:
             return y, p.max(axis=-1)
         return y
-
-
-import time
 
 
 def transformer_predict(
@@ -424,9 +405,7 @@ def transformer_predict(
     """
     num_classes = len(torch.unique(eval_ys))
 
-    def predict(
-        eval_xs, eval_ys, used_style, softmax_temperature, return_logits
-    ):
+    def predict(eval_xs, eval_ys, used_style, softmax_temperature, return_logits):
         # Initialize results array size S, B, Classes
 
         # no_grad disables inference_mode, because otherwise the gradients are lost
@@ -434,7 +413,6 @@ def transformer_predict(
             torch.inference_mode() if inference_mode and no_grad else NOP()
         )
         with inference_mode_call:
-            start = time.time()
             output = model(
                 (
                     (
@@ -448,9 +426,7 @@ def transformer_predict(
                 single_eval_pos=eval_position,
             )[:, :, 0:num_classes]
 
-            output = output[:, :, 0:num_classes] / torch.exp(
-                softmax_temperature
-            )
+            output = output[:, :, 0:num_classes] / torch.exp(softmax_temperature)
             if not return_logits:
                 output = torch.nn.functional.softmax(output, dim=-1)
             # else:
@@ -474,18 +450,11 @@ def transformer_predict(
             eval_xs = eval_xs[
                 :,
                 :,
-                sorted(
-                    np.random.choice(
-                        eval_xs.shape[2], max_features, replace=False
-                    )
-                ),
+                sorted(np.random.choice(eval_xs.shape[2], max_features, replace=False)),
             ]
 
         if preprocess_transform != "none":
-            if (
-                preprocess_transform == "power"
-                or preprocess_transform == "power_all"
-            ):
+            if preprocess_transform == "power" or preprocess_transform == "power_all":
                 pt = PowerTransformer(standardize=True)
             elif (
                 preprocess_transform == "quantile"
@@ -493,8 +462,7 @@ def transformer_predict(
             ):
                 pt = QuantileTransformer(output_distribution="normal")
             elif (
-                preprocess_transform == "robust"
-                or preprocess_transform == "robust_all"
+                preprocess_transform == "robust" or preprocess_transform == "robust_all"
             ):
                 pt = RobustScaler(unit_variance=True)
 
@@ -526,7 +494,7 @@ def transformer_predict(
                     trans = pt.transform(eval_xs[:, col : col + 1])
                     # print(scipy.stats.spearmanr(trans[~np.isnan(eval_xs[:, col:col+1])], eval_xs[:, col:col+1][~np.isnan(eval_xs[:, col:col+1])]))
                     eval_xs[:, col : col + 1] = trans
-                except:
+                except Exception:
                     pass
             eval_xs = torch.tensor(eval_xs).float()
         warnings.simplefilter("default")
@@ -537,9 +505,7 @@ def transformer_predict(
         eval_xs = (
             remove_outliers(
                 eval_xs,
-                normalize_positions=-1
-                if normalize_with_test
-                else eval_position,
+                normalize_positions=-1 if normalize_with_test else eval_position,
             )
             if not normalize_to_ranking
             else normalize_data(to_ranking_low_mem(eval_xs))
@@ -609,9 +575,7 @@ def transformer_predict(
     )
 
     ensemble_configurations = list(
-        itertools.product(
-            class_shift_configurations, feature_shift_configurations
-        )
+        itertools.product(class_shift_configurations, feature_shift_configurations)
     )
     # default_ensemble_config = ensemble_configurations[0]
 
@@ -624,9 +588,7 @@ def transformer_predict(
             styles_configurations,
         )
     )
-    ensemble_configurations = ensemble_configurations[
-        0:N_ensemble_configurations
-    ]
+    ensemble_configurations = ensemble_configurations[0:N_ensemble_configurations]
     # if N_ensemble_configurations == 1:
     #    ensemble_configurations = [default_ensemble_config]
 
@@ -634,7 +596,6 @@ def transformer_predict(
 
     eval_xs_transformed = {}
     inputs, labels = [], []
-    start = time.time()
     for ensemble_configuration in ensemble_configurations:
         (
             (class_shift_configuration, feature_shift_configuration),
@@ -652,9 +613,7 @@ def transformer_predict(
         eval_xs_, eval_ys_ = eval_xs.clone(), eval_ys.clone()
 
         if preprocess_transform_configuration in eval_xs_transformed:
-            eval_xs_ = eval_xs_transformed[
-                preprocess_transform_configuration
-            ].clone()
+            eval_xs_ = eval_xs_transformed[preprocess_transform_configuration].clone()
         else:
             eval_xs_ = preprocess_input(
                 eval_xs_,
@@ -664,9 +623,7 @@ def transformer_predict(
                 eval_xs_ = eval_xs_.detach()
             eval_xs_transformed[preprocess_transform_configuration] = eval_xs_
 
-        eval_ys_ = (
-            (eval_ys_ + class_shift_configuration) % num_classes
-        ).float()
+        eval_ys_ = ((eval_ys_ + class_shift_configuration) % num_classes).float()
 
         eval_xs_ = torch.cat(
             [
@@ -698,9 +655,7 @@ def transformer_predict(
     inputs = torch.split(inputs, batch_size_inference, dim=1)
     labels = torch.cat(labels, 1)
     labels = torch.split(labels, batch_size_inference, dim=1)
-    # print('PREPROCESSING TIME', str(time.time() - start))
     outputs = []
-    start = time.time()
     for batch_input, batch_label in zip(inputs, labels):
         # preprocess_transform_ = preprocess_transform if styles_configuration % 2 == 0 else 'none'
         import warnings

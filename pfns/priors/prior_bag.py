@@ -17,9 +17,7 @@ def get_batch(
     batch_size_per_gp_sample=None,
     **kwargs,
 ):
-    batch_size_per_gp_sample = batch_size_per_gp_sample or (
-        min(64, batch_size)
-    )
+    batch_size_per_gp_sample = batch_size_per_gp_sample or (min(64, batch_size))
     num_models = batch_size // batch_size_per_gp_sample
     assert (
         num_models * batch_size_per_gp_sample == batch_size
@@ -73,9 +71,7 @@ def get_batch(
         "prior bag, merging attributes",
         [s.other_filled_attributes([]) for s in sample],
     )
-    sample = {
-        k: merge(sample, k) for k in sample[0].other_filled_attributes([])
-    }
+    sample = {k: merge(sample, k) for k in sample[0].other_filled_attributes([])}
     if hyperparameters.get("verbose"):
         print({k: v.shape for k, v in sample.items()})
 

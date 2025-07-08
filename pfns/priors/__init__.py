@@ -1,2 +1,4 @@
 from .prior import Batch
-from .utils import get_batch_sequence as get_batch_sequence
+from .utils import get_batch_sequence
+
+__all__ = ["Batch", "get_batch_sequence"]

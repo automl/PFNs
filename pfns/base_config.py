@@ -2,7 +2,7 @@ import importlib
 import json
 import typing as tp
 from collections.abc import Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import fields, is_dataclass
 from typing import ClassVar
 
 import yaml

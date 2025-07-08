@@ -1,4 +1,5 @@
 # fmt: off
+# flake8: noqa
 
 import time
 
@@ -30,8 +31,8 @@ def get_model(x, y, hyperparameters):
     model = ExactGPModel(x, y, likelihood)
     model.likelihood.noise = torch.ones_like(model.likelihood.noise) * hyperparameters["noise"]
     model.covar_module.outputscale = torch.ones_like(model.covar_module.outputscale) * hyperparameters["outputscale"]
-    model.covar_module.base_kernel.lengthscale = torch.ones_like(model.covar_module.base_kernel.lengthscale) * \
-                                                 hyperparameters["lengthscale"]
+    model.covar_module.base_kernel.lengthscale = \
+        torch.ones_like(model.covar_module.base_kernel.lengthscale) * hyperparameters["lengthscale"]
     return model, likelihood
 
 

@@ -1,7 +1,4 @@
-import math
 import os
-
-import subprocess as sp
 from functools import partial
 
 import pfns.encoders as encoders
@@ -72,12 +69,10 @@ def load_model_only_inference(path, filename, device="cpu"):
 
     model.criterion = loss
     module_prefix = "module."
-    model_state = {
-        k.replace(module_prefix, ""): v for k, v in model_state.items()
-    }
+    model_state = {k.replace(module_prefix, ""): v for k, v in model_state.items()}
     for key in list(model_state.keys()):
-        model_state[key.replace("decoder", "decoder_dict.standard")] = (
-            model_state.pop(key)
+        model_state[key.replace("decoder", "decoder_dict.standard")] = model_state.pop(
+            key
         )
     model.load_state_dict(model_state)
     model.to(device)

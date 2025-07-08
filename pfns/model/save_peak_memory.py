@@ -66,9 +66,7 @@ def support_save_peak_mem_factor(method: MethodType) -> Callable:
         if save_peak_mem_factor is not None:
             assert isinstance(save_peak_mem_factor, int)
             assert save_peak_mem_factor > 1
-            split_size = (
-                x.size(0) + save_peak_mem_factor - 1
-            ) // save_peak_mem_factor
+            split_size = (x.size(0) + save_peak_mem_factor - 1) // save_peak_mem_factor
 
             split_args = zip(
                 *[

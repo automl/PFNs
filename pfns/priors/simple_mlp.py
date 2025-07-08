@@ -1,7 +1,5 @@
 import math
 
-import numpy as np
-
 import torch
 from torch import nn
 
@@ -27,10 +25,7 @@ class MLP(torch.nn.Module):
         else:
             self.linears = nn.ModuleList(
                 [nn.Linear(num_inputs, num_hidden)]
-                + [
-                    nn.Linear(num_hidden, num_hidden)
-                    for _ in range(num_layers - 2)
-                ]
+                + [nn.Linear(num_hidden, num_hidden) for _ in range(num_layers - 2)]
                 + [nn.Linear(num_hidden, num_outputs)]
             )
 
@@ -139,8 +134,7 @@ def get_batch(
     for x_ in x_for_mlp:  # iterating across batch size
         model.reset_parameters()
         y = model(
-            x_[None].repeat(n_targets_per_input, 1, 1)
-            / math.sqrt(num_features)
+            x_[None].repeat(n_targets_per_input, 1, 1) / math.sqrt(num_features)
         ).squeeze(-1)
         ys.append(y.T)
 

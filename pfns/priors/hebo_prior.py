@@ -5,16 +5,22 @@ from typing import List, Optional, Union
 import botorch
 import gpytorch
 import torch
-from gpytorch.means import ZeroMean
-from gpytorch.priors.torch_priors import (
-    GammaPrior,
-    LogNormalPrior,
-    UniformPrior,
-)
-from torch import nn
-from botorch.models.transforms.input import *
 from botorch.exceptions import InputDataWarning
+
+# Explicitly import all undefined things used in this file from botorch.models.transforms.input
+from botorch.models.transforms.input import (
+    BotorchTensorDimensionError,
+    expand_and_copy_tensor,
+    fantasize,
+    InputTransform,
+    Kumaraswamy,
+    Prior,
+    Tensor,
+)
 from gpytorch.constraints import GreaterThan
+from gpytorch.means import ZeroMean
+from gpytorch.priors.torch_priors import GammaPrior, LogNormalPrior, UniformPrior
+from torch import nn
 
 from ..utils import default_device, to_tensor
 
@@ -70,9 +76,7 @@ class Warp(gpytorch.Module):
             batch_shape: The batch shape.
         """
         super().__init__()
-        self.register_buffer(
-            "indices", torch.tensor(indices, dtype=torch.long)
-        )
+        self.register_buffer("indices", torch.tensor(indices, dtype=torch.long))
         self.transform_on_train = transform_on_train
         self.transform_on_eval = transform_on_eval
         self.transform_on_fantasize = transform_on_fantasize
@@ -91,9 +95,7 @@ class Warp(gpytorch.Module):
             p_name = f"concentration{i}"
             self.register_parameter(
                 p_name,
-                nn.Parameter(
-                    torch.full(batch_shape + self.indices.shape, 1.0)
-                ),
+                nn.Parameter(torch.full(batch_shape + self.indices.shape, 1.0)),
             )
         if concentration0_prior is not None:
 
@@ -226,7 +228,7 @@ class Warp(gpytorch.Module):
         """
         other_state_dict = other.state_dict()
         return (
-            type(self) == type(other)
+            type(self) is type(other)
             and (self.transform_on_train == other.transform_on_train)
             and (self.transform_on_eval == other.transform_on_eval)
             and (self.transform_on_fantasize == other.transform_on_fantasize)
@@ -328,17 +330,13 @@ def get_model(x, y, hyperparameters: dict, sample=True):
             torch.tensor(
                 hyperparameters.get("hebo_noise_logmean", -4.63), device=device
             ),
-            torch.tensor(
-                hyperparameters.get("hebo_noise_std", 0.5), device=device
-            ),
+            torch.tensor(hyperparameters.get("hebo_noise_std", 0.5), device=device),
         ),
         "noise",
     )
     lengthscale_prior = (
         GammaPrior(
-            torch.tensor(
-                hyperparameters["lengthscale_concentration"], device=device
-            ),
+            torch.tensor(hyperparameters["lengthscale_concentration"], device=device),
             torch.tensor(hyperparameters["lengthscale_rate"], device=device),
         )
         if hyperparameters.get("lengthscale_concentration", None)
@@ -373,9 +371,7 @@ def get_model(x, y, hyperparameters: dict, sample=True):
         ),
     )
 
-    if torch.rand(1).item() < float(
-        hyperparameters.get("add_linear_kernel", True)
-    ):
+    if torch.rand(1).item() < float(hyperparameters.get("add_linear_kernel", True)):
         # ORIG DIFF: added priors for variance and outputscale of linear kernel
         var_prior = UniformPrior(
             torch.tensor(0.0, device=device), torch.tensor(1.0, device=device)
@@ -504,15 +500,11 @@ def get_batch(
     with gpytorch.settings.fast_computations(
         *hyperparameters.get("fast_computations", (True, True, True))
     ):
-        batch_size_per_gp_sample = batch_size_per_gp_sample or max(
-            batch_size // 4, 1
-        )
+        batch_size_per_gp_sample = batch_size_per_gp_sample or max(batch_size // 4, 1)
         assert batch_size % batch_size_per_gp_sample == 0
 
         total_num_candidates = batch_size * (2 ** (fix_to_range is not None))
-        num_candidates = batch_size_per_gp_sample * (
-            2 ** (fix_to_range is not None)
-        )
+        num_candidates = batch_size_per_gp_sample * (2 ** (fix_to_range is not None))
         unused_feature_likelihood = hyperparameters.get(
             "unused_feature_likelihood", False
         )
@@ -544,9 +536,7 @@ def get_batch(
                 max_vals, _ = torch.max(reshaped_x, dim=2, keepdim=True)
                 # Handle the case where min == max to avoid division by zero
                 denom = max_vals - min_vals
-                denom[denom == 0] = (
-                    1.0  # Set denominator to 1 where max == min
-                )
+                denom[denom == 0] = 1.0  # Set denominator to 1 where max == min
                 # Normalize to [0,1]
                 normalized_x = (reshaped_x - min_vals) / denom
                 # Reshape back to original format
@@ -568,7 +558,7 @@ def get_batch(
                 used_local_x = local_x[..., ~unused_feature_mask]
             else:
                 used_local_x = local_x
-            get_model_and_likelihood = lambda: get_model(
+            get_model_and_likelihood = lambda: get_model(  # noqa: E731
                 used_local_x,
                 torch.randn(num_candidates, x.shape[1], device=device),
                 hyperparameters,
@@ -614,9 +604,7 @@ def get_batch(
                     if fix_to_range is None:
                         # for k, v in model.named_parameters(): print(k,v)
                         samples.append(sample.transpose(0, 1))
-                        samples_wo_noise.append(
-                            sample_wo_noise.transpose(0, 1)
-                        )
+                        samples_wo_noise.append(sample_wo_noise.transpose(0, 1))
                         break
                     smaller_mask = sample < fix_to_range[0]
                     larger_mask = sample >= fix_to_range[1]
@@ -633,9 +621,9 @@ def get_batch(
                             )
                         continue
 
-                    x[i : i + batch_size_per_gp_sample] = local_x[
-                        in_range_mask
-                    ][:batch_size_per_gp_sample]
+                    x[i : i + batch_size_per_gp_sample] = local_x[in_range_mask][
+                        :batch_size_per_gp_sample
+                    ]
                     sample = sample[in_range_mask][:batch_size_per_gp_sample]
                     samples.append(sample.transpose(0, 1))
                     samples_wo_noise.append(sample_wo_noise.transpose(0, 1))

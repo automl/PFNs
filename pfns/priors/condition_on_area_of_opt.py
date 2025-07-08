@@ -35,9 +35,7 @@ def get_batch(
     :return:
     """
 
-    max_num_divisions = hyperparameters.get(
-        "condition_on_area_max_num_divisions", 5
-    )
+    max_num_divisions = hyperparameters.get("condition_on_area_max_num_divisions", 5)
     maximize = hyperparameters.get("condition_on_area_maximize", True)
     remove_correct_from_rand = hyperparameters.get(
         "condition_on_area_remove_correct_from_rand", False
@@ -81,8 +79,7 @@ def get_batch(
     )
     random_sections = torch.min(
         torch.floor(
-            torch.rand(batch_size, batch.x.shape[2], device=device)
-            * division_size
+            torch.rand(batch_size, batch.x.shape[2], device=device) * division_size
         ).long(),
         division_size - 1,
     )

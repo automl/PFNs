@@ -3,9 +3,10 @@ import math
 
 import scipy
 import torch
-from sklearn.preprocessing import power_transform, PowerTransformer
+from sklearn.preprocessing import PowerTransformer
 
 from .. import bar_distribution, transformer
+from ..utils import to_tensor
 
 
 def log01(x, eps=0.0000001, input_between_zero_and_one=False):
@@ -82,9 +83,7 @@ def general_power_transform(x_train, x_apply, eps, less_safe=False):
             x_out = x_apply - x_train.mean(0)
     else:
         pt = PowerTransformer(method="yeo-johnson")
-        if not less_safe and (
-            x_train.std() > 1_000 or x_train.mean().abs() > 1_000
-        ):
+        if not less_safe and (x_train.std() > 1_000 or x_train.mean().abs() > 1_000):
             x_apply = (x_apply - x_train.mean(0)) / x_train.std(0)
             x_train = (x_train - x_train.mean(0)) / x_train.std(0)
             print("inputs are LAARGEe, normalizing them")
@@ -162,34 +161,22 @@ def general_acq_function(
     if rand_sample is not False and (
         len(x_given) == 0
         or (
-            (
-                1 + x_given.shape[1]
-                if rand_sample is None
-                else max(2, rand_sample)
-            )
+            (1 + x_given.shape[1] if rand_sample is None else max(2, rand_sample))
             > x_given.shape[0]
         )
     ):
         print("rando")
-        return torch.zeros_like(
-            x_eval[:, 0]
-        )  # torch.randperm(x_eval.shape[0])[0]
+        return torch.zeros_like(x_eval[:, 0])  # torch.randperm(x_eval.shape[0])[0]
     y_given = y_given.reshape(-1)
     assert len(y_given) == len(x_given)
     if apply_power_transform:
         if pre_normalize:
             y_normed = y_given / y_given.std()
-            if (
-                not torch.isinf(y_normed).any()
-                and not torch.isnan(y_normed).any()
-            ):
+            if not torch.isinf(y_normed).any() and not torch.isnan(y_normed).any():
                 y_given = y_normed
         elif pre_znormalize:
             y_znormed = (y_given - y_given.mean()) / y_given.std()
-            if (
-                not torch.isinf(y_znormed).any()
-                and not torch.isnan(y_znormed).any()
-            ):
+            if not torch.isinf(y_znormed).any() and not torch.isnan(y_znormed).any():
                 y_given = y_znormed
         y_given = general_power_transform(
             y_given.unsqueeze(1),
@@ -244,12 +231,8 @@ def general_acq_function(
         x_eval = (x_eval - mean) / std
 
     if input_power_transform:
-        x_given = general_power_transform(
-            x_given, x_given, input_power_transform_eps
-        )
-        x_eval = general_power_transform(
-            x_given, x_eval, input_power_transform_eps
-        )
+        x_given = general_power_transform(x_given, x_given, input_power_transform_eps)
+        x_eval = general_power_transform(x_given, x_eval, input_power_transform_eps)
 
     if (
         input_rank_transform is True or input_rank_transform == "full"
@@ -288,9 +271,7 @@ def general_acq_function(
         if ensemble_log_dims == "01":
             x_full_feed = log01_batch(x_full_feed)
         elif ensemble_log_dims == "global01" or ensemble_log_dims is True:
-            x_full_feed = log01_batch(
-                x_full_feed, input_between_zero_and_one=True
-            )
+            x_full_feed = log01_batch(x_full_feed, input_between_zero_and_one=True)
         elif ensemble_log_dims == "01-10":
             x_full_feed = torch.cat(
                 (
@@ -310,8 +291,7 @@ def general_acq_function(
                     x_full_feed[
                         :,
                         :,
-                        (i + torch.arange(x_full_feed.shape[2]))
-                        % x_full_feed.shape[2],
+                        (i + torch.arange(x_full_feed.shape[2])) % x_full_feed.shape[2],
                     ]
                     for i in range(x_full_feed.shape[2])
                 ],
@@ -359,9 +339,7 @@ def general_acq_function(
         logits = model(
             (
                 style,
-                x_full_feed.repeat_interleave(
-                    dim=1, repeats=y_full_feed.shape[1]
-                ),
+                x_full_feed.repeat_interleave(dim=1, repeats=y_full_feed.shape[1]),
                 y_full_feed.repeat(1, x_full_feed.shape[1]),
             ),
             single_eval_pos=len(x_given),
@@ -413,16 +391,12 @@ def general_acq_function(
     elif acq_function == "ucb":
         acq_function = criterion.ucb
         if ucb_rest_prob is not None:
-            acq_function = lambda *args: criterion.ucb(
-                *args, rest_prob=ucb_rest_prob
-            )
+            acq_function = lambda *args: criterion.ucb(*args, rest_prob=ucb_rest_prob)  # noqa: E731
         acq_value = acq_ensembling(acq_function(logits_eval, tau))
     elif acq_function == "mean":
         acq_value = acq_ensembling(criterion.mean(logits_eval))
     elif acq_function.startswith("hebo"):
-        noise, upsi, delta, eps = (
-            float(v) for v in acq_function.split("_")[1:]
-        )
+        noise, upsi, delta, eps = (float(v) for v in acq_function.split("_")[1:])
         noise = y_given_std * math.sqrt(2 * noise)
         kappa = math.sqrt(
             upsi
@@ -433,24 +407,19 @@ def general_acq_function(
             )
         )
         rest_prob = 1.0 - 0.5 * (
-            1
-            + torch.erf(
-                torch.tensor(kappa / math.sqrt(2), device=logits.device)
-            )
+            1 + torch.erf(torch.tensor(kappa / math.sqrt(2), device=logits.device))
         )
         ucb = (
-            acq_ensembling(
-                criterion.ucb(logits_eval, None, rest_prob=rest_prob)
-            )
+            acq_ensembling(criterion.ucb(logits_eval, None, rest_prob=rest_prob))
             + torch.randn(len(logits_eval), device=logits_eval.device) * noise
         )
         noisy_best_f = (
             tau
             + eps
             + noise
-            * torch.randn(len(logits_eval), device=logits_eval.device)[
-                :, None
-            ].repeat(1, logits_eval.shape[1])
+            * torch.randn(len(logits_eval), device=logits_eval.device)[:, None].repeat(
+                1, logits_eval.shape[1]
+            )
         )
 
         log_pi = acq_ensembling(criterion.pi(logits_eval, noisy_best_f).log())
@@ -465,14 +434,12 @@ def general_acq_function(
             :param costs: An (n_points, n_costs) array
             :return: A (n_points, ) boolean array, indicating whether each point is Pareto efficient
             """
-            is_efficient = torch.ones(
-                costs.shape[0], dtype=bool, device=costs.device
-            )
+            is_efficient = torch.ones(costs.shape[0], dtype=bool, device=costs.device)
             for i, c in enumerate(costs):
                 if is_efficient[i]:
-                    is_efficient[is_efficient.clone()] = (
-                        costs[is_efficient] < c
-                    ).any(1)  # Keep any point with a lower cost
+                    is_efficient[is_efficient.clone()] = (costs[is_efficient] < c).any(
+                        1
+                    )  # Keep any point with a lower cost
                     is_efficient[i] = True  # And keep self
             return is_efficient
 
@@ -523,9 +490,7 @@ def simple_ei_acquisition(
     x_eval = x_eval.view(-1, x_eval.shape[-2], x_eval.shape[-1])
 
     # Forward pass on logits
-    x_combined = torch.concat(
-        (x_given.transpose(0, 1), x_eval.transpose(0, 1)), 0
-    )
+    x_combined = torch.concat((x_given.transpose(0, 1), x_eval.transpose(0, 1)), 0)
     y_transposed = y_given.transpose(0, 1)
     # print(f"x_combined shape: {x_combined.shape}, y_transposed shape: {y_transposed.shape}")
     with torch.set_grad_enabled(y_eval_for_finetuning is not None):
@@ -539,9 +504,7 @@ def simple_ei_acquisition(
             extras["loss"] = mean_loss.item()
 
     # Undo the reshaping to restore original shape
-    logits = logits.view(
-        *original_shape[:-2], logits.shape[-2], logits.shape[-1]
-    )
+    logits = logits.view(*original_shape[:-2], logits.shape[-2], logits.shape[-1])
     tau = tau.repeat(1, logits.shape[1])
     ei_values = criterion.ei(logits, tau)
 
@@ -579,9 +542,7 @@ def optimize_acq(
     :param kwargs: will be given to `general_acq_function`
     :return:
     """
-    x_eval = torch.rand(num_random_samples, known_x.shape[1]).requires_grad_(
-        True
-    )
+    x_eval = torch.rand(num_random_samples, known_x.shape[1]).requires_grad_(True)
     opt = torch.optim.Adam(params=[x_eval], lr=lr)
     best_acq, best_x = -float("inf"), x_eval[0].detach()
     for grad_step in range(num_grad_steps):
@@ -636,9 +597,7 @@ def optimize_acq_w_lbfgs(
     :return:
     """
     num_features = known_x.shape[1]
-    dims_w_gradient_opt = sorted(
-        set(range(num_features)) - set(dims_wo_gradient_opt)
-    )
+    dims_w_gradient_opt = sorted(set(range(num_features)) - set(dims_wo_gradient_opt))
     known_x = known_x.to(device)
     known_y = known_y.to(device)
     pre_sample_size = max(pre_sample_size, num_candidates)
@@ -714,11 +673,7 @@ def optimize_acq_w_lbfgs(
             x_eval.grad[x_eval.grad != x_eval.grad] = 0.0
         return (
             neg_mean_acq.detach().cpu().to(torch.float64).numpy(),
-            x_eval.grad.detach()
-            .view(*x.shape)
-            .cpu()
-            .to(torch.float64)
-            .numpy(),
+            x_eval.grad.detach().view(*x.shape).cpu().to(torch.float64).numpy(),
         )
 
     # Optimize best candidates with LBFGS
@@ -782,9 +737,6 @@ def optimize_acq_w_lbfgs(
         x_initial_all.cpu()[all_order].detach(),
         x_initial_all_ei.cpu()[all_order].detach(),
     )
-
-
-from ..utils import to_tensor
 
 
 class TransformerBOMethod:
@@ -867,17 +819,12 @@ class TransformerBOMethod:
             acq_values = acq_values.cpu().clone()
             acq_mask = acq_values == acq_values.max(dim=1, keepdim=True)[0]
 
+        possible_next = [torch.arange(X_pen.size(1))[mask] for mask in acq_mask]
         possible_next = [
-            torch.arange(X_pen.size(1))[mask] for mask in acq_mask
-        ]
-        possible_next = [
-            pn if len(pn) > 0 else torch.arange(X_pen.size(1))
-            for pn in possible_next
+            pn if len(pn) > 0 else torch.arange(X_pen.size(1)) for pn in possible_next
         ]
 
-        r = [
-            pn[torch.randperm(len(pn))[0]].cpu().item() for pn in possible_next
-        ]
+        r = [pn[torch.randperm(len(pn))[0]].cpu().item() for pn in possible_next]
 
         if no_batch_use:
             r = r[0]

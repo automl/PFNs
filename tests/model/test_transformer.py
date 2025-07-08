@@ -4,11 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from pfns.model import encoders, transformer
-from pfns.model.transformer import (
-    DEFAULT_EMSIZE,
-    isolate_torch_rng,
-    TableTransformer,
-)
+from pfns.model.transformer import isolate_torch_rng, TableTransformer
 from torch.nn import CrossEntropyLoss
 
 
@@ -24,9 +20,7 @@ class SimpleStyleEncoder(nn.Module):
             return self.linear(x).sum(dim=1)
 
 
-@pytest.fixture(
-    params=[True, False], ids=["batch_first_True", "batch_first_False"]
-)
+@pytest.fixture(params=[True, False], ids=["batch_first_True", "batch_first_False"])
 def batch_first_setting(request):
     """Provides True for batch_first=True and False for batch_first=False."""
     return request.param
@@ -598,13 +592,9 @@ def test_separate_train_inference(
     # 2. Infer with test data (x_test_model, y=None)
     model(
         x_train_model,
-        y_model[:, :n_train]
-        if model_batch_first_setting
-        else y_model[:n_train, :],
+        y_model[:, :n_train] if model_batch_first_setting else y_model[:n_train, :],
     )
-    logits1 = model(
-        x_test_model, None
-    )  # y is None for inference on x_test_model
+    logits1 = model(x_test_model, None)  # y is None for inference on x_test_model
 
     torch.manual_seed(12345)
     # Single call with train and test data
@@ -654,9 +644,7 @@ def test_transformer_overfit(attention_between_features):
 
     # Create test data with the same pattern
     x_test = torch.zeros((batch_size, seq_len_test, 1), device="cpu")
-    y_test = torch.zeros(
-        (batch_size, seq_len_test), device="cpu", dtype=torch.long
-    )
+    y_test = torch.zeros((batch_size, seq_len_test), device="cpu", dtype=torch.long)
 
     # Set the first dimension of each feature to 0, 1, or 2 to represent our input
     for i in range(batch_size):
@@ -699,9 +687,7 @@ def test_transformer_overfit(attention_between_features):
                 # Get predictions
                 _, predicted = torch.max(logits, 1)
                 accuracy = (predicted == y_test).float().mean().item()
-                print(
-                    f"Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}"
-                )
+                print(f"Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}")
 
                 if accuracy == 1.0 and loss.item() < 0.1:
                     print("Successfully overfit the data!")

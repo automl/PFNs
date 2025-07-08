@@ -73,9 +73,7 @@ def get_batch(*args, hyperparameters, get_batch, **kwargs):
                 else:
                     inside -= 1
                     if inside < -100:
-                        print(
-                            "It seems that the input warping is not working."
-                        )
+                        print("It seems that the input warping is not working.")
             if c1_v := hyperparameters.get("fix_input_warping_c1", False):
                 c1[:] = c1_v
             if c0_v := hyperparameters.get("fix_input_warping_c0", False):
@@ -96,15 +94,11 @@ def get_batch(*args, hyperparameters, get_batch, **kwargs):
             exp_x = exp_in_prev_range(x, transform_factors)
             minus_exp_x = 1.0 - exp_in_prev_range(1.0 - x, transform_factors)
             exp_x = torch.where(log_direction, exp_x, minus_exp_x)
-            x_transformed = torch.where(
-                to_be_transformed[None, None, :], exp_x, x
-            )
+            x_transformed = torch.where(to_be_transformed[None, None, :], exp_x, x)
         elif input_warping_type is None or input_warping_type == "none":
             x_transformed = x
         else:
-            raise ValueError(
-                f"Unknown input_warping_type: {input_warping_type}"
-            )
+            raise ValueError(f"Unknown input_warping_type: {input_warping_type}")
 
         if input_warping_norm:
             x_transformed = denorm(x_transformed)

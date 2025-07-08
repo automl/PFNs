@@ -5,7 +5,7 @@ from pfns.model.multi_head_attention import MultiHeadAttention
 
 def test_attention():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Testing attention on {device =}.")
+    print(f"Testing attention on {device=}.")
     n_batch = 7
     nhead = 4
     n_seq_q = 534

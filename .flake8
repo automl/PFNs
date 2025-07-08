@@ -1,0 +1,17 @@
+# We don't put this in pyproject.toml, as the meta-internal infra does not support it.
+
+[flake8]
+# E203: black and flake8 disagree on whitespace before ':'
+# W503: black and flake8 disagree on how to place operators
+# D: Don't run any docstring checks, except those specified in extend-select
+# E501: line length is handled by black
+# E266: too many leading '#' for block comment but we want them for formatting
+# E741: ambiguous variable names are ok in this project as they can be math terms
+ignore = E203, E701, W503, D, E501, E266, E741
+# D107: Missing docstring in public method `__init__`
+# D417: Missing argument descriptions in the docstring
+# D3*: Quotes issues
+# D207, D208, D214, D215: indentation
+extend-select = D417, D3, D207, D208, D214, D215
+exclude =
+  build, dist, tutorials, website, .eggs

@@ -18,9 +18,7 @@ from .prior import Batch
 
 
 @torch.no_grad()
-def zero_time_get_batch(
-    batch_size, seq_len, num_features, device="cpu", **kwargs
-):
+def zero_time_get_batch(batch_size, seq_len, num_features, device="cpu", **kwargs):
     y = torch.rand(batch_size, seq_len, 1, device=device)
     return Batch(
         x=torch.rand(batch_size, seq_len, num_features, device=device),
@@ -29,9 +27,7 @@ def zero_time_get_batch(
     )
 
 
-def plot_features(
-    data, targets, fig=None, categorical=True, plot_diagonal=True
-):
+def plot_features(data, targets, fig=None, categorical=True, plot_diagonal=True):
     import seaborn as sns
 
     if torch.is_tensor(data):
@@ -39,9 +35,7 @@ def plot_features(
         targets = targets.detach().cpu().numpy()
 
     fig2 = fig if fig else plt.figure(figsize=(8, 8))
-    spec2 = gridspec.GridSpec(
-        ncols=data.shape[1], nrows=data.shape[1], figure=fig2
-    )
+    spec2 = gridspec.GridSpec(ncols=data.shape[1], nrows=data.shape[1], figure=fig2)
     for d in range(0, data.shape[1]):
         for d2 in range(0, data.shape[1]):
             if d > d2:
@@ -93,27 +87,55 @@ def plot_prior(prior, samples=1000, buckets=50):
     plt.show()
 
 
-trunc_norm_sampler_f = lambda mu, sigma: lambda: stats.truncnorm(
-    (0 - mu) / sigma, (1000000 - mu) / sigma, loc=mu, scale=sigma
-).rvs(1)[0]
-beta_sampler_f = lambda a, b: lambda: np.random.beta(a, b)
-gamma_sampler_f = lambda a, b: lambda: np.random.gamma(a, b)
-uniform_sampler_f = lambda a, b: lambda: np.random.uniform(a, b)
-uniform_int_sampler_f = lambda a, b: lambda: round(np.random.uniform(a, b))
+def trunc_norm_sampler_f(mu, sigma):
+    def sampler():
+        return stats.truncnorm(
+            (0 - mu) / sigma, (1000000 - mu) / sigma, loc=mu, scale=sigma
+        ).rvs(1)[0]
+
+    return sampler
+
+
+def beta_sampler_f(a, b):
+    def sampler():
+        return np.random.beta(a, b)
+
+    return sampler
+
+
+def gamma_sampler_f(a, b):
+    def sampler():
+        return np.random.gamma(a, b)
+
+    return sampler
+
+
+def uniform_sampler_f(a, b):
+    def sampler():
+        return np.random.uniform(a, b)
+
+    return sampler
+
+
+def uniform_int_sampler_f(a, b):
+    def sampler():
+        return round(np.random.uniform(a, b))
+
+    return sampler
 
 
 def zipf_sampler_f(a, b, c):
     x = np.arange(b, c)
     weights = x ** (-a)
     weights /= weights.sum()
-    return lambda: stats.rv_discrete(
-        name="bounded_zipf", values=(x, weights)
-    ).rvs(1)
+    return lambda: stats.rv_discrete(name="bounded_zipf", values=(x, weights)).rvs(1)
 
 
-scaled_beta_sampler_f = lambda a, b, scale, minimum: lambda: minimum + round(
-    beta_sampler_f(a, b)() * (scale - minimum)
-)
+def scaled_beta_sampler_f(a, b, scale, minimum):
+    def sampler():
+        return minimum + round(beta_sampler_f(a, b)() * (scale - minimum))
+
+    return sampler
 
 
 def normalize_by_used_features_f(
@@ -126,24 +148,18 @@ def normalize_by_used_features_f(
 
 def order_by_y(x, y):
     order = torch.argsort(y if random.randint(0, 1) else -y, dim=0)[:, 0, 0]
-    order = (
-        order.reshape(2, -1).transpose(0, 1).reshape(-1)
-    )  # .reshape(seq_len)
+    order = order.reshape(2, -1).transpose(0, 1).reshape(-1)  # .reshape(seq_len)
     x = x[
         order
     ]  # .reshape(2, -1).transpose(0, 1).reshape(-1).flip([0]).reshape(seq_len, 1, -1)
-    y = y[
-        order
-    ]  # .reshape(2, -1).transpose(0, 1).reshape(-1).reshape(seq_len, 1, -1)
+    y = y[order]  # .reshape(2, -1).transpose(0, 1).reshape(-1).reshape(seq_len, 1, -1)
 
     return x, y
 
 
 def randomize_classes(x, num_classes):
     classes = torch.arange(0, num_classes, device=x.device)
-    random_classes = torch.randperm(num_classes, device=x.device).type(
-        x.type()
-    )
+    random_classes = torch.randperm(num_classes, device=x.device).type(x.type())
     x = ((x.unsqueeze(-1) == classes) * random_classes).sum(-1)
     return x
 
@@ -170,14 +186,10 @@ class CategoricalActivation(nn.Module):
 
         num_classes = self.num_classes_sampler()
         hid_strength = (
-            torch.abs(x).mean(0).unsqueeze(0)
-            if self.keep_activation_size
-            else None
+            torch.abs(x).mean(0).unsqueeze(0) if self.keep_activation_size else None
         )
 
-        categorical_classes = (
-            torch.rand((x.shape[1], x.shape[2])) < self.categorical_p
-        )
+        categorical_classes = torch.rand((x.shape[1], x.shape[2])) < self.categorical_p
         class_boundaries = torch.zeros(
             (num_classes - 1, x.shape[1], x.shape[2]),
             device=x.device,
@@ -191,20 +203,14 @@ class CategoricalActivation(nn.Module):
 
         for b in range(x.shape[1]):
             x_rel = x[:, b, categorical_classes[b]]
-            boundaries_rel = class_boundaries[
-                :, b, categorical_classes[b]
-            ].unsqueeze(1)
+            boundaries_rel = class_boundaries[:, b, categorical_classes[b]].unsqueeze(1)
             x[:, b, categorical_classes[b]] = (x_rel > boundaries_rel).sum(
                 dim=0
             ).float() - num_classes / 2
 
         ordered_classes = torch.rand((x.shape[1], x.shape[2])) < self.ordered_p
-        ordered_classes = torch.logical_and(
-            ordered_classes, categorical_classes
-        )
-        x[:, ordered_classes] = randomize_classes(
-            x[:, ordered_classes], num_classes
-        )
+        ordered_classes = torch.logical_and(ordered_classes, categorical_classes)
+        x[:, ordered_classes] = randomize_classes(x[:, ordered_classes], num_classes)
 
         x = x * hid_strength if self.keep_activation_size else x
 
@@ -223,9 +229,7 @@ class QuantizationActivation(torch.nn.Module):
         x = (x > self.thresholds).sum(-1)
 
         if random.random() < self.reorder_p:
-            x = randomize_classes(x.unsqueeze(-1), self.n_thresholds).squeeze(
-                -1
-            )
+            x = randomize_classes(x.unsqueeze(-1), self.n_thresholds).squeeze(-1)
         # x = ((x.float() - self.n_thresholds/2) / self.n_thresholds)# * data_std + data_mean
         x = normalize_data(x)
         return x
@@ -253,9 +257,7 @@ class PowerActivation(torch.nn.Module):
         exp = torch.nn.Parameter(
             (
                 shared_exp * self.shared_exp_strength
-                + shared_exp
-                * torch.randn(x.shape[-1])
-                * (1 - self.shared_exp_strength)
+                + shared_exp * torch.randn(x.shape[-1]) * (1 - self.shared_exp_strength)
             )
             * 2
             + 0.5
@@ -307,9 +309,7 @@ class get_batch_sequence(list):
         super().__init__(get_batch_methods)
 
     def __repr__(self):
-        s = ",\n\t".join(
-            [f"{pretty_get_batch(get_batch)}" for get_batch in self]
-        )
+        s = ",\n\t".join([f"{pretty_get_batch(get_batch)}" for get_batch in self])
         return f"get_batch_sequence(\n\t{s}\n)"
 
     def __call__(self, *args, **kwargs):

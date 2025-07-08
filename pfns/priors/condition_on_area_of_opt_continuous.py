@@ -39,12 +39,8 @@ def get_batch(
     """
 
     maximize = hyperparameters.get("condition_on_area_maximize", True)
-    size_range = hyperparameters.get(
-        "condition_on_area_size_range", (0.1, 0.5)
-    )
-    distribution = hyperparameters.get(
-        "condition_on_area_distribution", "uniform"
-    )
+    size_range = hyperparameters.get("condition_on_area_size_range", (0.1, 0.5))
+    distribution = hyperparameters.get("condition_on_area_distribution", "uniform")
     assert distribution in ["uniform"]
 
     batch: Batch = get_batch(
@@ -63,8 +59,7 @@ def get_batch(
     prob_correct = torch.rand(batch_size, d, device=device)
     correct_opt = torch.rand(batch_size, d, device=device) < prob_correct
     division_size = (
-        torch.rand(batch_size, d, device=device)
-        * (size_range[1] - size_range[0])
+        torch.rand(batch_size, d, device=device) * (size_range[1] - size_range[0])
         + size_range[0]
     )
 
@@ -81,12 +76,8 @@ def get_batch(
     )  # shape: (batch_size, d)
     optima_hints = optima_hints.clamp(0, 1)
 
-    optima_division_lower_bound = (optima_hints - division_size / 2).clamp(
-        0, 1
-    )
-    optima_division_upper_bound = (optima_hints + division_size / 2).clamp(
-        0, 1
-    )
+    optima_division_lower_bound = (optima_hints - division_size / 2).clamp(0, 1)
+    optima_division_upper_bound = (optima_hints + division_size / 2).clamp(0, 1)
 
     random_hints = (
         torch.rand(batch_size, d, device=device)
@@ -95,12 +86,8 @@ def get_batch(
     )  # shape: (batch_size, d)
     random_hints = random_hints.clamp(0, 1)
 
-    random_division_lower_bound = (random_hints - division_size / 2).clamp(
-        0, 1
-    )
-    random_division_upper_bound = (random_hints + division_size / 2).clamp(
-        0, 1
-    )
+    random_division_lower_bound = (random_hints - division_size / 2).clamp(0, 1)
+    random_division_upper_bound = (random_hints + division_size / 2).clamp(0, 1)
 
     lower_bounds = torch.where(
         correct_opt, optima_division_lower_bound, random_division_lower_bound
@@ -109,8 +96,8 @@ def get_batch(
         correct_opt, optima_division_upper_bound, random_division_upper_bound
     )
 
-    batch.style = torch.stack(
-        [prob_correct, lower_bounds, upper_bounds], 2
-    ).view(batch_size, -1)  # shape: (batch_size, 3*d)
+    batch.style = torch.stack([prob_correct, lower_bounds, upper_bounds], 2).view(
+        batch_size, -1
+    )  # shape: (batch_size, 3*d)
 
     return batch

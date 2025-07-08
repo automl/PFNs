@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib
 
-import itertools
 import os
 import time
 import typing as tp
@@ -169,7 +168,7 @@ def train(
         model.load_state_dict(load_weights_from_this_state_dict)
 
     print(
-        f"Using a Transformer with {sum(p.numel() for p in model.parameters())/1000/1000:.{2}f} M parameters"
+        f"Using a Transformer with {sum(p.numel() for p in model.parameters()) / 1000 / 1000:.{2}f} M parameters"
     )
 
     model.to(device)
@@ -180,17 +179,13 @@ def train(
     if hasattr(c.optimizer, "create_optimizer"):
         optimizer = c.optimizer.create_optimizer(model.parameters())
     else:
-        raise ValueError(
-            "main_config.optimizer must have a 'create_optimizer' method"
-        )
+        raise ValueError("main_config.optimizer must have a 'create_optimizer' method")
 
     # Resolve scheduler string to function
     if c.scheduler == "cosine_decay":
         scheduler_fn = get_cosine_schedule_with_warmup
     else:
-        assert (
-            c.scheduler == "constant"
-        ), f"Scheduler {c.scheduler} not supported"
+        assert c.scheduler == "constant", f"Scheduler {c.scheduler} not supported"
         scheduler_fn = None
 
     if scheduler_fn is None:
@@ -210,14 +205,12 @@ def train(
             and os.path.exists(c.train_state_dict_load_path)
         ):
             # load_checkpoint needs the scheduler instance, not the factory
-            start_epoch = (
-                load_checkpoint(  # load_checkpoint might return start_epoch
-                    model,
-                    optimizer,
-                    scheduler,
-                    c.train_state_dict_load_path,
-                    device,
-                )
+            start_epoch = load_checkpoint(  # load_checkpoint might return start_epoch
+                model,
+                optimizer,
+                scheduler,
+                c.train_state_dict_load_path,
+                device,
             )
         else:
             print(
@@ -290,9 +283,7 @@ def train(
                         using_dist=using_dist,
                         training=False,
                     )
-                    val_score_str = (
-                        f"| eval mean loss {val_epoch_result.loss:5.2f} "
-                    )
+                    val_score_str = f"| eval mean loss {val_epoch_result.loss:5.2f} "
 
             else:
                 val_score_str = ""
@@ -306,7 +297,7 @@ def train(
                     + f"| data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f} "
                     + f"forward time {epoch_result.forward_time:5.2f} "
                     + (
-                        f"| max gpu mem {torch.cuda.max_memory_allocated()/1024/1024/1024:.2f}GiB "
+                        f"| max gpu mem {torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024:.2f}GiB "
                         if device.startswith("cuda")
                         else ""
                     )
@@ -384,20 +375,19 @@ def train_or_evaluate_epoch(
 
     for batch_index, batch in enumerate(dl):
         batch: prior.Batch = batch  # for IDE support
+        # batch.x.shape == (batch_size, seq_len, num_features)
         if not c.model.attention_between_features:
             assert (
                 c.model.features_per_group == batch.x.shape[2]
             ), "features_per_group must match the number of features in the input, if attention_between_features is False"
         targets = batch.target_y.to(device)
         single_eval_pos = batch.single_eval_pos
-        seq_len = batch.x.shape[1]
 
         if tqdm_iter is not None:
             tqdm_iter.update()
 
         if using_dist and not (
-            batch_index % c.aggregate_k_gradients
-            == c.aggregate_k_gradients - 1
+            batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1
         ):
             potentially_no_sync_context = model.no_sync()
         else:
@@ -412,15 +402,11 @@ def train_or_evaluate_epoch(
             time_to_get_batch = time.time() - before_get_batch
             before_forward = time.time()
             try:
-                with autocast(
-                    device.split(":")[0], enabled=scaler is not None
-                ):
+                with autocast(device.split(":")[0], enabled=scaler is not None):
                     output = model(
                         x=batch.x.to(device),
                         y=batch.y[:, :single_eval_pos].to(device),
-                        style=move_style_and_check_shape(
-                            batch.style, batch.x, device
-                        ),
+                        style=move_style_and_check_shape(batch.style, batch.x, device),
                         y_style=move_y_style_and_check_shape(
                             batch.y_style, batch.y, device
                         ),
@@ -452,10 +438,7 @@ def train_or_evaluate_epoch(
                 if training:
                     loss_scaled.backward()
 
-                if (
-                    batch_index % c.aggregate_k_gradients
-                    == c.aggregate_k_gradients - 1
-                ):
+                if batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1:
                     if scaler:
                         # we unscale s.t. we can clip grads right
                         scaler.unscale_(optimizer)
@@ -473,10 +456,10 @@ def train_or_evaluate_epoch(
                         model.parameters(), 1.0
                     )  # noop if no grads available
 
-                    if (
-                        batch.gradient_multipliers is not None
-                    ):  # this None by default
-                        assert training, "Gradient multipliers are only supported for training"
+                    if batch.gradient_multipliers is not None:  # this None by default
+                        assert (
+                            training
+                        ), "Gradient multipliers are only supported for training"
                         assert (
                             c.aggregate_k_gradients == 1
                         ), "Scaling grads is only supported if you don't do grad acc."
@@ -488,10 +471,7 @@ def train_or_evaluate_epoch(
                         # todo make print to see that this is actually running
                         with torch.no_grad():
                             for w in model.parameters():
-                                w.grad = (
-                                    w.grad
-                                    * batch.gradient_multipliers.view(-1)[0]
-                                )
+                                w.grad = w.grad * batch.gradient_multipliers.view(-1)[0]
 
                     if training:
                         if scaler:
@@ -594,21 +574,15 @@ def compute_losses(
         )
     else:
         losses = criterion(output, targets.unsqueeze(-1))
-    losses = einops.rearrange(
-        losses, "(b t) s -> b s t", t=n_targets_per_input
-    )
+    losses = einops.rearrange(losses, "(b t) s -> b s t", t=n_targets_per_input)
     losses = losses.mean(-1)
     return losses
 
 
-def load_checkpoint(
-    model, optimizer, scheduler, train_state_dict_load_path, device
-):
+def load_checkpoint(model, optimizer, scheduler, train_state_dict_load_path, device):
     print(f"Loading checkpoint from {train_state_dict_load_path}")
     try:
-        checkpoint = torch.load(
-            train_state_dict_load_path, map_location=device
-        )
+        checkpoint = torch.load(train_state_dict_load_path, map_location=device)
         if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
             # New format with model, optimizer state and epoch
             model.load_state_dict(checkpoint["model_state_dict"], strict=True)
@@ -628,9 +602,7 @@ def load_checkpoint(
         raise e
 
 
-def save_checkpoint(
-    model, optimizer, train_state_dict_save_path, epoch, config
-):
+def save_checkpoint(model, optimizer, train_state_dict_save_path, epoch, config):
     set_model_to(model, optimizer, "eval")
     save_model = (
         model.module

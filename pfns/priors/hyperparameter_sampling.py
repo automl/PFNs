@@ -66,12 +66,8 @@ class PowerUniformFloatDistConfig(DistributionConfig):
     power: float
 
     def __post_init__(self):
-        assert (
-            self.lower >= 0
-        ), "lower bound must be non-negative for power sampling"
-        assert (
-            self.upper > self.lower
-        ), "upper bound must be greater than lower bound"
+        assert self.lower >= 0, "lower bound must be non-negative for power sampling"
+        assert self.upper > self.lower, "upper bound must be greater than lower bound"
         assert self.power > 0, "power must be positive"
         return super().__post_init__()
 
@@ -198,9 +194,7 @@ def get_batch(batch_size, *args, hyperparameters, get_batch, **kwargs):
 
     if num_models == -1:
         num_models = batch_size
-    assert (
-        batch_size % num_models == 0
-    ), "batch_size must be a multiple of num_models"
+    assert batch_size % num_models == 0, "batch_size must be a multiple of num_models"
 
     sub_batches = []
     sub_hps = []
@@ -238,9 +232,9 @@ def get_batch(batch_size, *args, hyperparameters, get_batch, **kwargs):
                     b.style[:, j] = float("nan")
                 else:
                     b.style[:, j] = float(
-                        access_dict_with_path(
-                            hyperparameters, hp
-                        ).encode_to_torch(hp_value)
+                        access_dict_with_path(hyperparameters, hp).encode_to_torch(
+                            hp_value
+                        )
                     )
 
         batch.style = torch.cat([b.style for b in sub_batches], dim=0)
@@ -253,9 +247,7 @@ class HyperparameterNormalizer(torch.nn.Module):
     def __init__(self, hyperparameters):
         super().__init__()
         self.hyperparameters = hyperparameters
-        self.to_be_encoded_hyperparameters = get_all_styled_hps(
-            self.hyperparameters
-        )
+        self.to_be_encoded_hyperparameters = get_all_styled_hps(self.hyperparameters)
         self.num_hps = len(self.to_be_encoded_hyperparameters)
 
     def forward(self, raw_hyperparameters):
@@ -290,9 +282,7 @@ class HyperparameterNormalizer(torch.nn.Module):
                     )
 
                 # Scale from [0,1] to [-1,1]
-                encoded_x[non_nan_indices, i] = (
-                    2 * encoded_x[non_nan_indices, i] - 1
-                )
+                encoded_x[non_nan_indices, i] = 2 * encoded_x[non_nan_indices, i] - 1
 
         assert encoded_x.isnan().sum() == 0, "Encoded styles have nans"
 

@@ -3,9 +3,6 @@ from dataclasses import dataclass
 
 import torch
 
-from pfns import utils
-from torch import nn
-
 
 class EpochResult(tp.NamedTuple):
     loss: float  # total loss for the epoch
@@ -98,9 +95,7 @@ def update_importance_sampling_infos(
                         .cpu()
                         .item()
                     )
-                    normalized_squared_grad_magnitudes[name] = (
-                        normalized_grad_magnitude
-                    )
+                    normalized_squared_grad_magnitudes[name] = normalized_grad_magnitude
         total_normalized_grad_magnitude = sum(
             v for k, v in normalized_squared_grad_magnitudes.items()
         )
@@ -142,9 +137,7 @@ def move_y_style_and_check_shape(
         if y_style.dim() == 2:
             broken = y_style.shape[0] != y.shape[0]
         else:
-            raise ValueError(
-                f"y_style must have 2 dimensions, got {y_style.shape}"
-            )
+            raise ValueError(f"y_style must have 2 dimensions, got {y_style.shape}")
         if broken:
             raise ValueError(
                 f"y_style must have the same batch size as y, got {y_style.shape=} "
@@ -161,13 +154,9 @@ def move_style_and_check_shape(
         if style.dim() == 2:
             broken = style.shape[0] != x.shape[0]
         elif style.dim() == 3:
-            broken = (
-                style.shape[0] != x.shape[0] or style.shape[1] != x.shape[2]
-            )
+            broken = style.shape[0] != x.shape[0] or style.shape[1] != x.shape[2]
         else:
-            raise ValueError(
-                f"style must have 2 or 3 dimensions, got {style.shape}"
-            )
+            raise ValueError(f"style must have 2 or 3 dimensions, got {style.shape}")
         if broken:
             raise ValueError(
                 f"style must have the same batch size as x and if it has 3 dimensions, "

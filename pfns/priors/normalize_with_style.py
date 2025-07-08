@@ -72,9 +72,7 @@ def normalize_data_by_first_k(x, k):
         relevant_x = x[:k]
         mean_style = relevant_x.mean(0)
         std_style = relevant_x.std(0)
-        x = (x - relevant_x.mean(0, keepdim=True)) / relevant_x.std(
-            0, keepdim=True
-        )
+        x = (x - relevant_x.mean(0, keepdim=True)) / relevant_x.std(0, keepdim=True)
     elif k == 1:
         mean_style = x[0]
         std_style = torch.ones_like(x[0])

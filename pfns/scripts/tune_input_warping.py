@@ -1,7 +1,6 @@
 import random
 from collections import OrderedDict
 from functools import partial
-from typing import OrderedDict
 
 import numpy as np
 import scipy
@@ -92,14 +91,10 @@ def log_vs_nonlog(x, w, *args, **kwargs):
     loss_no_log = fit_lbfgs(
         x, w, *args, **{**kwargs, "num_grad_steps": 0}, params0=no_log
     )
-    loss_log = fit_lbfgs(
-        x, w, *args, **{**kwargs, "num_grad_steps": 0}, params0=log
-    )
+    loss_log = fit_lbfgs(x, w, *args, **{**kwargs, "num_grad_steps": 0}, params0=log)
     print("loss no log", loss_no_log[0][1], "loss log", loss_log[0][1])
     if loss_no_log[0][1] < loss_log[0][1]:
-        set_params_with_array(
-            module=w, x=loss_no_log[1], property_dict=property_dict
-        )
+        set_params_with_array(module=w, x=loss_no_log[1], property_dict=property_dict)
     if true_nll:
         best_params, _, _ = module_to_array(module=w)
         print(
@@ -114,9 +109,7 @@ def log_vs_nonlog(x, w, *args, **kwargs):
         )
 
 
-def fit_lbfgs_with_restarts(
-    x, w, *args, old_solution=None, rs_size=50, **kwargs
-):
+def fit_lbfgs_with_restarts(x, w, *args, old_solution=None, rs_size=50, **kwargs):
     if "true_nll" in kwargs:
         true_nll = kwargs["true_nll"]
         del kwargs["true_nll"]
@@ -125,17 +118,13 @@ def fit_lbfgs_with_restarts(
     rs_results = []
     if old_solution:
         rs_results.append(
-            fit_lbfgs(
-                x, old_solution, *args, **{**kwargs, "num_grad_steps": 0}
-            )
+            fit_lbfgs(x, old_solution, *args, **{**kwargs, "num_grad_steps": 0})
         )
     for i in range(rs_size):
         with torch.no_grad():
             w.concentration0[:] = w.concentration0_prior()
             w.concentration1[:] = w.concentration1_prior()
-        rs_results.append(
-            fit_lbfgs(x, w, *args, **{**kwargs, "num_grad_steps": 0})
-        )
+        rs_results.append(fit_lbfgs(x, w, *args, **{**kwargs, "num_grad_steps": 0}))
     best_r = min(rs_results, key=lambda r: r[0][1])
     print("best r", best_r)
     with torch.set_grad_enabled(True):
@@ -146,9 +135,7 @@ def fit_lbfgs_with_restarts(
     if true_nll:
         print(
             "true nll",
-            fit_lbfgs(
-                x, w, true_nll, **{**kwargs, "num_grad_steps": 0}, params0=r.x
-            ),
+            fit_lbfgs(x, w, true_nll, **{**kwargs, "num_grad_steps": 0}, params0=r.x),
         )
     return r
 
@@ -168,8 +155,7 @@ subsets = [None] + [
     [random.sample(range(i), i // 2) for _ in range(10)] for i in range(1, 100)
 ]
 neg_subsets = [None] + [
-    [list(set(range(i)) - set(s)) for s in ss]
-    for i, ss in enumerate(subsets[1:], 1)
+    [list(set(range(i)) - set(s)) for s in ss] for i, ss in enumerate(subsets[1:], 1)
 ]
 random.setstate(old_seed)
 
@@ -242,9 +228,7 @@ def fit_input_warping(
             )
             total_nll = (
                 total_nll
-                + model.criterion(
-                    logits, y[cutoff : cutoff + 1, None]
-                ).squeeze()
+                + model.criterion(logits, y[cutoff : cutoff + 1, None]).squeeze()
             )
         assert len(total_nll.shape) == 0, f"{total_nll.shape=}"
         return total_nll
@@ -268,9 +252,7 @@ def fit_input_warping(
                 )
                 total_nll = (
                     total_nll
-                    + model.criterion(
-                        logits, y_[cutoff : cutoff + 1, None]
-                    ).squeeze()
+                    + model.criterion(logits, y_[cutoff : cutoff + 1, None]).squeeze()
                 )
         assert len(total_nll.shape) == 0, f"{total_nll.shape=}"
         return total_nll
@@ -294,9 +276,7 @@ def fit_input_warping(
                 )
                 total_nll = (
                     total_nll
-                    + model.criterion(
-                        logits, y_[cutoff : cutoff + 1, None]
-                    ).squeeze()
+                    + model.criterion(logits, y_[cutoff : cutoff + 1, None]).squeeze()
                 )
         assert len(total_nll.shape) == 0, f"{total_nll.shape=}"
         return total_nll / 100
@@ -325,13 +305,9 @@ def fit_input_warping(
         Y = torch.stack(Y, dim=1).view((x.shape[0], batch_size, 1))
 
         total_nll = 0.0
-        batch_indizes = sorted(
-            list(set(np.linspace(0, len(x), 10, dtype=int)))
-        )
+        batch_indizes = sorted(list(set(np.linspace(0, len(x), 10, dtype=int))))
 
-        for chunk_start, chunk_end in zip(
-            batch_indizes[:-1], batch_indizes[1:]
-        ):
+        for chunk_start, chunk_end in zip(batch_indizes[:-1], batch_indizes[1:]):
             X_cutoff = X[:chunk_start]
             Y_cutoff = Y[:chunk_start]
             X_after_cutoff = X[chunk_start:chunk_end]
@@ -348,9 +324,7 @@ def fit_input_warping(
             )  # (n_obs+n_pen) x batch_size x n_feat
 
             logits = model((X_tmp, Y_cutoff), single_eval_pos=int(chunk_start))
-            total_nll = (
-                total_nll + model.criterion(logits, Y_after_cutoff).sum()
-            )
+            total_nll = total_nll + model.criterion(logits, Y_after_cutoff).sum()
         assert len(total_nll.shape) == 0, f"{total_nll.shape=}"
         return total_nll
 
@@ -400,9 +374,7 @@ def fit_input_warping(
             Y_tmp = torch.cat((Y_cutoff, pad_y), dim=0)
 
             logits = model((X_tmp, Y_tmp), single_eval_pos=cutoff)
-            total_nll = (
-                total_nll + model.criterion(logits, Y_after_cutoff).sum()
-            )
+            total_nll = total_nll + model.criterion(logits, Y_after_cutoff).sum()
         assert len(total_nll.shape) == 0, f"{total_nll.shape=}"
         return total_nll
 
@@ -420,12 +392,8 @@ def fit_input_warping(
         eval_x = x[indices][None]  # shape (1, 10, d)
         eval_y = y[indices][None]  # shape (1, 10, 1)
         # all other indices are used for training
-        train_x = torch.stack(
-            [torch.cat([x[:i], x[i + 1 :]]) for i in indices], 1
-        )
-        train_y = torch.stack(
-            [torch.cat([y[:i], y[i + 1 :]]) for i in indices], 1
-        )
+        train_x = torch.stack([torch.cat([x[:i], x[i + 1 :]]) for i in indices], 1)
+        train_y = torch.stack([torch.cat([y[:i], y[i + 1 :]]) for i in indices], 1)
 
         logits = model(train_x, train_y, eval_x)
         return model.criterion(logits, eval_y).squeeze(0)

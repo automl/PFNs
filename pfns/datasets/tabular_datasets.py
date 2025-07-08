@@ -4,9 +4,7 @@ import pandas as pd
 import torch
 
 
-def get_openml_classification(
-    did, max_samples, multiclass=True, shuffled=True
-):
+def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):
     dataset = openml.datasets.get_dataset(did)
     X, y, categorical_indicator, attribute_names = dataset.get_data(
         dataset_format="array", target=dataset.default_target_attribute
@@ -29,14 +27,7 @@ def get_openml_classification(
         sort = np.argsort(y) if y.mean() < 0.5 else np.argsort(-y)
         pos = int(y.sum()) if y.mean() < 0.5 else int((1 - y).sum())
         X, y = X[sort][-pos * 2 :], y[sort][-pos * 2 :]
-        y = (
-            torch.tensor(y)
-            .reshape(2, -1)
-            .transpose(0, 1)
-            .reshape(-1)
-            .flip([0])
-            .float()
-        )
+        y = torch.tensor(y).reshape(2, -1).transpose(0, 1).reshape(-1).flip([0]).float()
         X = (
             torch.tensor(X)
             .reshape(2, -1, X.shape[1])
@@ -73,9 +64,7 @@ def load_openml_list(
 
     datalist = pd.DataFrame.from_dict(openml_list, orient="index")
     if filter_for_nan:
-        datalist = datalist[
-            datalist["NumberOfInstancesWithMissingValues"] == 0
-        ]
+        datalist = datalist[datalist["NumberOfInstancesWithMissingValues"] == 0]
         print(
             f"Number of datasets after Nan and feature number filtering: {len(datalist)}"
         )
@@ -94,13 +83,11 @@ def load_openml_list(
             raise Exception("Regression not supported")
             # X, y, categorical_feats, attribute_names = get_openml_regression(int(entry.did), max_samples)
         else:
-            X, y, categorical_feats, attribute_names = (
-                get_openml_classification(
-                    int(entry.did),
-                    max_samples,
-                    multiclass=multiclass,
-                    shuffled=shuffled,
-                )
+            X, y, categorical_feats, attribute_names = get_openml_classification(
+                int(entry.did),
+                max_samples,
+                multiclass=multiclass,
+                shuffled=shuffled,
             )
         if X is None:
             continue
@@ -108,9 +95,7 @@ def load_openml_list(
         if X.shape[1] > num_feats:
             if return_capped:
                 X = X[:, 0:num_feats]
-                categorical_feats = [
-                    c for c in categorical_feats if c < num_feats
-                ]
+                categorical_feats = [c for c in categorical_feats if c < num_feats]
                 modifications["feats_capped"] = True
             else:
                 print("Too many features")
@@ -119,7 +104,7 @@ def load_openml_list(
             modifications["samples_capped"] = True
 
         if X.shape[0] < min_samples:
-            print(f"Too few samples left")
+            print("Too few samples left")
             continue
 
         if len(np.unique(y)) > max_num_classes:
@@ -128,7 +113,7 @@ def load_openml_list(
                 y = y[y < np.unique(y)[10]]
                 modifications["classes_capped"] = True
             else:
-                print(f"Too many classes")
+                print("Too many classes")
                 continue
 
         datasets += [

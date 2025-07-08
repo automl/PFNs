@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from functools import partial
 from typing import Any, Literal
 
 import einops
-import networkx as nx
-import numpy as np
 import torch
 
 from pfns.model.encoders import (
@@ -46,8 +44,7 @@ class TableTransformer(nn.Module):
         nlayers: int = 10,
         y_encoder: nn.Module | None = None,
         decoder_dict: (
-            dict[str, tuple[Callable[[int, int, int], nn.Module] | None, int]]
-            | None
+            dict[str, tuple[Callable[[int, int, int], nn.Module] | None, int]] | None
         ) = None,
         activation: Literal["gelu", "relu"] = "gelu",
         recompute_layer: bool = False,
@@ -164,18 +161,19 @@ class TableTransformer(nn.Module):
         self.attention_between_features = attention_between_features
         self.batch_first = batch_first
 
-        layer_creator = lambda: PerFeatureLayer(
-            d_model=ninp,
-            nhead=nhead,
-            dim_feedforward=nhid,
-            activation=activation,
-            zero_init=zero_init,
-            precomputed_kv=(
-                precomputed_kv.pop(0) if precomputed_kv is not None else None
-            ),
-            attention_between_features=attention_between_features,
-            **layer_kwargs,
-        )
+        def layer_creator():
+            return PerFeatureLayer(
+                d_model=ninp,
+                nhead=nhead,
+                dim_feedforward=nhid,
+                activation=activation,
+                zero_init=zero_init,
+                precomputed_kv=(
+                    precomputed_kv.pop(0) if precomputed_kv is not None else None
+                ),
+                attention_between_features=attention_between_features,
+                **layer_kwargs,
+            )
 
         nlayers_encoder = nlayers
 
@@ -205,13 +203,9 @@ class TableTransformer(nn.Module):
 
         self.feature_positional_embedding = feature_positional_embedding
         if feature_positional_embedding == "learned":
-            self.feature_positional_embedding_embeddings = nn.Embedding(
-                1_000, ninp
-            )
+            self.feature_positional_embedding_embeddings = nn.Embedding(1_000, ninp)
         elif feature_positional_embedding == "subspace":
-            self.feature_positional_embedding_embeddings = nn.Linear(
-                ninp // 4, ninp
-            )
+            self.feature_positional_embedding_embeddings = nn.Linear(ninp // 4, ninp)
 
         self.cached_feature_positional_embeddings: torch.Tensor | None = None
         self.seed = seed if seed is not None else random.randint(0, 1_000_000)  # noqa: S311
@@ -353,9 +347,7 @@ class TableTransformer(nn.Module):
         current_context_len = single_eval_pos or 0
 
         if isinstance(x, dict):
-            assert "main" in set(
-                x.keys()
-            ), f"Main must be in input keys: {x.keys()}."
+            assert "main" in set(x.keys()), f"Main must be in input keys: {x.keys()}."
         else:  # x is a tensor
             x = {"main": x}
         # x is now a dict of batch-first tensors: x[k] is (batch_size, seq_len, features)
@@ -383,8 +375,7 @@ class TableTransformer(nn.Module):
             # x[k] is (batch_size, seq_len, num_features_k)
             num_features_k = x[k].shape[2]
             missing_to_next = (
-                self.features_per_group
-                - (num_features_k % self.features_per_group)
+                self.features_per_group - (num_features_k % self.features_per_group)
             ) % self.features_per_group
 
             if missing_to_next > 0:
@@ -416,8 +407,6 @@ class TableTransformer(nn.Module):
                         dim=1,  # Pad along style's feature dimension (dim 1)
                     )
 
-        _num_features_padded_main = x["main"].shape[2]
-
         # Splits up the input into subgroups (batch-first)
         # x[k] from (batch_size, seq_len, num_features_padded) to (batch_size, seq_len, num_groups, features_per_group)
         for k in x:
@@ -427,14 +416,10 @@ class TableTransformer(nn.Module):
                 n=self.features_per_group,
             )
 
-        num_groups_main = x["main"].shape[
-            2
-        ]  # Number of feature groups in x["main"]
+        num_groups_main = x["main"].shape[2]  # Number of feature groups in x["main"]
 
         if style is not None:
-            if (
-                style.ndim == 3
-            ):  # (batch_size, num_features_style_padded, style_dim)
+            if style.ndim == 3:  # (batch_size, num_features_style_padded, style_dim)
                 batched_style = einops.rearrange(
                     style,
                     "b (f n) s_dim -> (b f) n s_dim",
@@ -472,15 +457,12 @@ class TableTransformer(nn.Module):
                 y[k] = y[k].unsqueeze(-1)  # B S -> B S 1
 
             # Pad y sequence length if shorter than x's sequence length (_seq_len)
-            if (
-                y[k].shape[1] < _seq_len
-            ):  # _seq_len is full sequence length from x
+            if y[k].shape[1] < _seq_len:  # _seq_len is full sequence length from x
                 # current_context_len is the length of the training part of y
                 assert (
                     y[k].shape[1]
                     == current_context_len  # y should only contain train part if shorter
-                    or y[k].shape[1]
-                    == _seq_len  # Should not happen if already shorter
+                    or y[k].shape[1] == _seq_len  # Should not happen if already shorter
                 ), f"y[{k}] seq len {y[k].shape[1]} vs train_seq_len {current_context_len} vs x_seq_len {_seq_len}"
 
                 # Only pad if y is for training part or not main y (auxiliary targets might be full length)
@@ -552,8 +534,7 @@ class TableTransformer(nn.Module):
             num_features=_num_features_orig_main,
             seq_len=_seq_len,
             cache_embeddings=(
-                self.cache_trainset_representation
-                and single_eval_pos is not None
+                self.cache_trainset_representation and single_eval_pos is not None
             ),
             use_cached_embeddings=(
                 self.cache_trainset_representation and single_eval_pos is None
@@ -562,9 +543,7 @@ class TableTransformer(nn.Module):
 
         if self.attention_between_features:
             # b s f e + b s 1 e -> b s f+1 e
-            embedded_input = torch.cat(
-                (embedded_x, embedded_y.unsqueeze(2)), dim=2
-            )
+            embedded_input = torch.cat((embedded_x, embedded_y.unsqueeze(2)), dim=2)
         else:
             # add them together in this case, like for the original PFNs
             assert (
@@ -614,17 +593,13 @@ class TableTransformer(nn.Module):
                     dtype=embedded_input.dtype,
                 )
 
-            full_embedded_style = torch.cat(
-                (embedded_style, embedded_y_style), dim=2
-            )
+            full_embedded_style = torch.cat((embedded_style, embedded_y_style), dim=2)
 
             embedded_input = torch.cat(
                 (full_embedded_style, embedded_input),
                 dim=1,  # Concatenate along sequence dimension
             )
-            current_context_len += (
-                1  # Context length for attention now includes style
-            )
+            current_context_len += 1  # Context length for attention now includes style
 
         if torch.isnan(embedded_input).any():
             raise ValueError(
@@ -665,9 +640,7 @@ class TableTransformer(nn.Module):
         )
 
         output_decoded["train_embeddings"] = train_encoder_out
-        output_decoded["test_embeddings"] = (
-            test_encoder_out  # Already batch-first
-        )
+        output_decoded["test_embeddings"] = test_encoder_out  # Already batch-first
 
         return output_decoded
 
@@ -729,9 +702,7 @@ class TableTransformer(nn.Module):
             elif self.feature_positional_embedding is None:
                 embs = None
             else:
-                raise ValueError(
-                    f"Unknown {self.feature_positional_embedding=}"
-                )
+                raise ValueError(f"Unknown {self.feature_positional_embedding=}")
 
         self.cached_embeddings = None
         if cache_embeddings and embs is not None:
@@ -799,9 +770,7 @@ class LayerStack(nn.Module):
                 layers randomly during training up to this number.
         """
         super().__init__()
-        self.layers = nn.ModuleList(
-            [layer_creator() for _ in range(num_layers)]
-        )
+        self.layers = nn.ModuleList([layer_creator() for _ in range(num_layers)])
         self.num_layers = num_layers
         self.min_num_layers_layer_dropout = (
             min_num_layers_layer_dropout
@@ -831,9 +800,7 @@ class LayerStack(nn.Module):
 
         for layer in self.layers[:n_layers]:
             if self.recompute_each_layer and x.requires_grad:
-                x = checkpoint(
-                    partial(layer, **kwargs), x, use_reentrant=False
-                )  # type: ignore
+                x = checkpoint(partial(layer, **kwargs), x, use_reentrant=False)  # type: ignore
             else:
                 x = layer(x, **kwargs)
 
@@ -844,9 +811,7 @@ class LayerStack(nn.Module):
 
 
 @contextmanager
-def isolate_torch_rng(
-    seed: int, device: torch.device
-) -> Generator[None, None, None]:
+def isolate_torch_rng(seed: int, device: torch.device) -> Generator[None, None, None]:
     """
     Use the specified seed within the context manager (`with isolate_torch_rng(...)`)
     and return to the original state after the context manager exits.

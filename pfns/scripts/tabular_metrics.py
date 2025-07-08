@@ -15,7 +15,6 @@ from sklearn.metrics import (
     average_precision_score,
     balanced_accuracy_score,
     mean_absolute_error,
-    mean_squared_error,
     r2_score,
     roc_auc_score,
 )
@@ -50,9 +49,7 @@ def auc_metric(target, pred, multi_class="ovo", numpy=False):
     lib = np if numpy else torch
     try:
         if not numpy:
-            target = (
-                torch.tensor(target) if not torch.is_tensor(target) else target
-            )
+            target = torch.tensor(target) if not torch.is_tensor(target) else target
             pred = torch.tensor(pred) if not torch.is_tensor(pred) else pred
         if len(lib.unique(target)) > 2:
             if not numpy:
@@ -82,9 +79,7 @@ def accuracy_metric(target, pred):
 
 def brier_score_metric(target, pred):
     target = torch.tensor(target) if not torch.is_tensor(target) else target
-    target = torch.nn.functional.one_hot(
-        target, num_classes=len(torch.unique(target))
-    )
+    target = torch.nn.functional.one_hot(target, num_classes=len(torch.unique(target)))
     pred = torch.tensor(pred) if not torch.is_tensor(pred) else pred
     diffs = (pred - target) ** 2
     return torch.mean(torch.sum(diffs, axis=1))
@@ -102,9 +97,7 @@ def average_precision_metric(target, pred):
     target = torch.tensor(target) if not torch.is_tensor(target) else target
     pred = torch.tensor(pred) if not torch.is_tensor(pred) else pred
     if len(torch.unique(target)) > 2:
-        return torch.tensor(
-            average_precision_score(target, torch.argmax(pred, -1))
-        )
+        return torch.tensor(average_precision_score(target, torch.argmax(pred, -1)))
     else:
         return torch.tensor(average_precision_score(target, pred[:, 1] > 0.5))
 
@@ -113,9 +106,7 @@ def balanced_accuracy_metric(target, pred):
     target = torch.tensor(target) if not torch.is_tensor(target) else target
     pred = torch.tensor(pred) if not torch.is_tensor(pred) else pred
     if len(torch.unique(target)) > 2:
-        return torch.tensor(
-            balanced_accuracy_score(target, torch.argmax(pred, -1))
-        )
+        return torch.tensor(balanced_accuracy_score(target, torch.argmax(pred, -1)))
     else:
         return torch.tensor(balanced_accuracy_score(target, pred[:, 1] > 0.5))
 
@@ -196,28 +187,22 @@ def calculate_score_per_method(
                 y = global_results[f"{d[0]}_ys_at_{pos}"]
 
                 preds, y = (
-                    (
-                        preds.detach().cpu().numpy()
-                        if torch.is_tensor(preds)
-                        else preds
-                    ),
+                    (preds.detach().cpu().numpy() if torch.is_tensor(preds) else preds),
                     (y.detach().cpu().numpy() if torch.is_tensor(y) else y),
                 )
 
                 try:
                     if metric == time_metric:
-                        global_results[f"{d[0]}_{name}_at_{pos}"] = (
-                            global_results[f"{d[0]}_time_at_{pos}"]
-                        )
+                        global_results[f"{d[0]}_{name}_at_{pos}"] = global_results[
+                            f"{d[0]}_time_at_{pos}"
+                        ]
                         valid_positions = valid_positions + 1
                     else:
-                        global_results[f"{d[0]}_{name}_at_{pos}"] = (
-                            aggregator_f(
-                                [
-                                    metric(y[split], preds[split])
-                                    for split in range(y.shape[0])
-                                ]
-                            )
+                        global_results[f"{d[0]}_{name}_at_{pos}"] = aggregator_f(
+                            [
+                                metric(y[split], preds[split])
+                                for split in range(y.shape[0])
+                            ]
                         )
                         valid_positions = valid_positions + 1
                 except Exception as err:
@@ -236,17 +221,14 @@ def calculate_score_per_method(
             global_results[f"{aggregator}_{name}_at_{pos}"] = np.nan
 
     for d in ds:
-        metrics = [
-            global_results[f"{d[0]}_{name}_at_{pos}"] for pos in eval_positions
-        ]
+        metrics = [global_results[f"{d[0]}_{name}_at_{pos}"] for pos in eval_positions]
         metrics = [m for m in metrics if not np.isnan(m)]
         global_results[f"{d[0]}_{aggregator}_{name}"] = (
             aggregator_f(metrics) if len(metrics) > 0 else np.nan
         )
 
     metrics = [
-        global_results[f"{aggregator}_{name}_at_{pos}"]
-        for pos in eval_positions
+        global_results[f"{aggregator}_{name}_at_{pos}"] for pos in eval_positions
     ]
     metrics = [m for m in metrics if not np.isnan(m)]
     global_results[f"{aggregator}_{name}"] = (
@@ -285,13 +267,9 @@ def make_metric_matrix(global_results, methods, pos, name, ds):
     for m in global_results:
         try:
             result += [
-                [
-                    global_results[m][d[0] + "_" + name + "_at_" + str(pos)]
-                    for d in ds
-                ]
+                [global_results[m][d[0] + "_" + name + "_at_" + str(pos)] for d in ds]
             ]
-        except Exception as e:
-            # raise(e)
+        except Exception:
             result += [[np.nan]]
     result = np.array(result)
     result = pd.DataFrame(
@@ -314,9 +292,7 @@ def make_metric_matrix(global_results, methods, pos, name, ds):
             ].std(axis=1)
         ]
         matrix_per_split += [
-            result.iloc[
-                :, [c.startswith(method + "_time") for c in result.columns]
-            ]
+            result.iloc[:, [c.startswith(method + "_time") for c in result.columns]]
         ]
 
     matrix_means = pd.DataFrame(matrix_means, index=methods).T

@@ -43,9 +43,7 @@ class TransformerConfig(base_config.BaseConfig):
             raise ValueError(f"Criterion {criterion} not supported")
 
         decoder_dict = (
-            self.decoder_dict
-            if self.decoder_dict
-            else {"standard": (None, n_out)}
+            self.decoder_dict if self.decoder_dict else {"standard": (None, n_out)}
         )
 
         if self.encoder is not None:
@@ -56,9 +54,7 @@ class TransformerConfig(base_config.BaseConfig):
             encoder = None
 
         if self.y_encoder is not None:
-            y_encoder = self.y_encoder.create_encoder(
-                features=1, emsize=self.emsize
-            )
+            y_encoder = self.y_encoder.create_encoder(features=1, emsize=self.emsize)
         else:
             y_encoder = None
 

@@ -34,8 +34,7 @@ def get_cosine_schedule_with_warmup(
         )
         return max(
             0.0,
-            0.5
-            * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)),
+            0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)),
         )
 
     return LambdaLR(optimizer, lr_lambda, last_epoch)
@@ -60,8 +59,7 @@ def get_restarting_cosine_schedule_with_warmup(
         )
         return max(
             0.0,
-            0.5
-            * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)),
+            0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)),
         )
 
     def lr_lambda(current_step):
@@ -213,24 +211,20 @@ def nan_handling_missing_for_a_reason_value(nan_prob=1.0):
 
 
 def torch_nanmean(x, axis=0, return_nanshare=False):
-    num = torch.where(
-        torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)
-    ).sum(axis=axis)
-    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(
+    num = torch.where(torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)).sum(
         axis=axis
     )
+    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(axis=axis)
     if return_nanshare:
         return value / num, 1.0 - num / x.shape[axis]
     return value / num
 
 
 def torch_nanstd(x, axis=0):
-    num = torch.where(
-        torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)
-    ).sum(axis=axis)
-    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(
+    num = torch.where(torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)).sum(
         axis=axis
     )
+    value = torch.where(torch.isnan(x), torch.full_like(x, 0), x).sum(axis=axis)
     mean = value / num
     mean_broadcast = torch.repeat_interleave(
         mean.unsqueeze(axis), x.shape[axis], dim=axis
@@ -269,9 +263,7 @@ def remove_outliers(X, n_sigma=4, normalize_positions=-1):
     cut_off = data_std * n_sigma
     lower, upper = data_mean - cut_off, data_mean + cut_off
 
-    data_clean[torch.logical_or(data_clean > upper, data_clean < lower)] = (
-        np.nan
-    )
+    data_clean[torch.logical_or(data_clean > upper, data_clean < lower)] = np.nan
     data_mean, data_std = (
         torch_nanmean(data_clean, axis=0),
         torch_nanstd(data_clean, axis=0),
@@ -427,8 +419,7 @@ def get_all_losses(j):
     if stdout := j.stdout():
         try:
             return [
-                float(v)
-                for v in re.findall(r"\|[ ]+mean loss[ ]+(\S+)[ ]+\|", stdout)
+                float(v) for v in re.findall(r"\|[ ]+mean loss[ ]+(\S+)[ ]+\|", stdout)
             ]
         except Exception as e:
             print("could not get losses from stdout, because of ", e)

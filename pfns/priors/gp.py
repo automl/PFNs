@@ -3,7 +3,7 @@ import time
 
 import torch
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import DotProduct, RBF, WhiteKernel
+from sklearn.gaussian_process.kernels import RBF
 from torch import nn
 
 from .prior import Batch
@@ -35,17 +35,13 @@ def get_batch(batch_size, seq_len, num_features, noisy_std=None, **kwargs):
     y_t = torch.zeros(batch_size, seq_len)
 
     for i in range(len(y_t)):
-        y_t[i] += gpr.sample_y(
-            x_t[i], random_state=random.randint(0, 2**32)
-        ).squeeze()
+        y_t[i] += gpr.sample_y(x_t[i], random_state=random.randint(0, 2**32)).squeeze()
     x, y = x_t.transpose(0, 1), y_t.transpose(0, 1)
     # x, _ = torch.sort(x,dim=0)
     return Batch(x=x, y=y, target_y=y)
 
 
-def evaluate(
-    x, y, y_non_noisy, use_mse=False, length_scale=length_scale_sampling_gp
-):
+def evaluate(x, y, y_non_noisy, use_mse=False, length_scale=length_scale_sampling_gp):
     start_time = time.time()
     losses_after_t = [0.0]
     for t in range(1, len(x)):

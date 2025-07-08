@@ -92,9 +92,7 @@ def get_batch(
         )  # styles are sorted :)
     else:
         styles = (
-            torch.randint(level + 1, (batch_size, 1), device=device)
-            .sort(0)
-            .values
+            torch.randint(level + 1, (batch_size, 1), device=device).sort(0).values
         )  # styles are sorted :)
 
     predict_mean_distribution = None
@@ -143,9 +141,9 @@ def get_batch(
             feed_x = levels_x[: single_eval_pos + 1 + add_seq_len].repeat(
                 1, num_evals, 1
             )
-            feed_x[single_eval_pos, :] = levels_x[
-                single_eval_pos:seq_len
-            ].reshape(-1, *levels_x.shape[2:])
+            feed_x[single_eval_pos, :] = levels_x[single_eval_pos:seq_len].reshape(
+                -1, *levels_x.shape[2:]
+            )
             if not use_mean_prediction:
                 feed_x[single_eval_pos + 1 :] = levels_x[seq_len:].repeat(
                     1, num_evals, 1
@@ -154,9 +152,9 @@ def get_batch(
             feed_y = levels_y[: single_eval_pos + 1 + add_seq_len].repeat(
                 1, num_evals, 1
             )
-            feed_y[single_eval_pos, :] = levels_y[
-                single_eval_pos:seq_len
-            ].reshape(-1, *levels_y.shape[2:])
+            feed_y[single_eval_pos, :] = levels_y[single_eval_pos:seq_len].reshape(
+                -1, *levels_y.shape[2:]
+            )
             if not use_mean_prediction:
                 feed_y[single_eval_pos + 1 :] = levels_y[seq_len:].repeat(
                     1, num_evals, 1
@@ -205,9 +203,7 @@ def get_batch(
                         )
                     ), f"{tuple(mean_pred_logits.shape)} vs {(feed_x_b.shape[1], model.criterion.num_bars)}"
                     means.append(
-                        model.criterion.icdf(
-                            mean_pred_logits, 1.0 - 1.0 / eval_seq_len
-                        )
+                        model.criterion.icdf(mean_pred_logits, 1.0 - 1.0 / eval_seq_len)
                     )
                 else:
                     logits = output["standard"].float()

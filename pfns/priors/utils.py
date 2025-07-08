@@ -14,6 +14,13 @@ import torch.utils.data  # Added for get_worker_info
 from torch import nn
 
 from ..utils import normalize_data
+
+# only for pickle backwards compatibility
+from .data_loading import (  # noqa: F401
+    _BatchedIterableDataset,
+    StandardDataLoader,
+    worker_init_fn,
+)
 from .prior import Batch
 
 

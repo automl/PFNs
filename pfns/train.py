@@ -330,7 +330,6 @@ def train(
         return {
             "total_loss": total_loss,
             "model": model.to("cpu"),
-            "data_loader": data_loader,
             "total_time": time.time() - total_start_time,
         }
 

@@ -1,7 +1,8 @@
 # PFNs
 
-Prior-data Fitted Networks (PFNs, https://arxiv.org/abs/2112.10510) are transformer encoders trained to perform supervised in-context learning on datasets randomly drawn from a prior.
-Our priors can in general be described by a function that samples a datasets, or more generally a batch of datasets.
+Prior-data Fitted Networks (PFNs, https://arxiv.org/abs/2112.10510) are transformer-based models trained to approximate Bayesian prediction.
+They are trained to do this via supervised in-context learning on datasets randomly drawn from a prior.
+Our priors can in general be described by a function that samples datasets, or more generally a batch of datasets.
 The PFN is then trained to predict a hold-out set of labels, given the rest of the dataset.
 
 The pseudo code for a simple prior that would yield a PFN that does 1d ridge regression on datasets with 100 elements, could be something like this:
@@ -15,12 +16,12 @@ def get_dataset_sample():
     return x, y
 ```
 
-Check out our [tutorial](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf) to train your own ridge regression PFN.
+**Check out our [tutorial](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf) to train your own ridge regression PFN.**
 
 ### Install with pip
 
 This way of installing allows you to use the package everywhere and still be able to edit files.
-You should use a pytorch compatible python version, of they don't support the latest version.
+You should use a pytorch compatible python version (oftentimes they don't support the latest version).
 ```bash
 git clone https://github.com/automl/PFNs.git
 cd PFNs
@@ -37,29 +38,13 @@ We use a CI, the parts of which you can run before locally:
 
 Check out our [Getting Started Colab](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf).
 
-### Tabular Data
 
+### What is in this package?
 
-For loading the pretrained TabPFN transformer model for classification and use it for evaluation, you can download the model like this
-
-```python
-import torch
-from pfns.scripts.tabpfn_interface import TabPFNClassifier
-# Load pretrained-model
-classifier = TabPFNClassifier(base_path='.', model_string="prior_diff_real_checkpoint_n_0_epoch_42.cpkt")
-
-train_xs = torch.rand(100,2)
-test_xs = torch.rand(100,2)
-train_ys = train_xs.mean(1) > .5
-# Fit and evaluate
-task_type = 'multiclass'
-classifier.fit(train_xs, train_ys)
-if task_type == 'multiclass':
-    prediction_ = classifier.predict_proba(test_xs) # For survival [:, 1:]
-else:
-    prediction_ = classifier.predict(test_xs)
-```
-
+- Code to train models with a variety of priors
+- The feature-wise architecture from TabPFNv2 as well as the traditional PFN architecture
+- A lot of normalizers to encode features well
+- Some code to run Bayesian Optimization experiments
 
 ### BO
 
@@ -134,6 +119,21 @@ The "Bayes' Power for Explaining In-Context Learning Generalizations" is
   author={M{\"u}ller, Samuel and Hollmann, Noah and Hutter, Frank},
   journal={arXiv preprint arXiv:2410.01565},
   year={2024}
+}
+```
+
+The new architecture, which we support via `config.model.features_per_group = <some small positive int, like 1>` + `config.model.attention_between_features = True`.
+
+```
+@article{hollmann2025accurate,
+  title={Accurate predictions on small data with a tabular foundation model},
+  author={Hollmann, Noah and M{\"u}ller, Samuel and Purucker, Lennart and Krishnakumar, Arjun and K{\"o}rfer, Max and Hoo, Shi Bin and Schirrmeister, Robin Tibor and Hutter, Frank},
+  journal={Nature},
+  volume={637},
+  number={8045},
+  pages={319--326},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
 }
 ```
 

@@ -17,7 +17,7 @@ try:
     )
 
     HAVE_FLASH_ATTN = True
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     HAVE_FLASH_ATTN = False
 
 

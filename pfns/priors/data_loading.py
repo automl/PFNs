@@ -284,7 +284,7 @@ class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
                                 dtype=torch.int64,
                             )
                             print("expected_losses", expected_losses)
-                            for step in range(self.num_steps):
+                            for _step in range(self.num_steps):
                                 current_losses = expected_losses[
                                     torch.arange(len(config)), config
                                 ]
@@ -386,7 +386,7 @@ class DiscreteImportanceSamplingDataLoader(StandardDataLoader):
         hp_indices = []
         hyperparameters_for_all_batches = []
         multipliers = []
-        for step in range(self.num_steps):
+        for _step in range(self.num_steps):
             hp_index = torch.multinomial(probs, 1).item()  # todo check this correct
             hp_indices.append(hp_index)
             hp_value = self.importance_hyperparameter_options[hp_index]

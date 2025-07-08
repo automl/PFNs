@@ -398,7 +398,7 @@ class Stroke(DiscretePrior):
 
             return i_indexes, j_indexes
 
-        for s, (length, (right, up)) in enumerate(self.stroke_types):
+        for length, (right, up) in self.stroke_types:
             i_indexes, j_indexes = compute_index_offsets(length, right, up)
             images_of_this_stroke = []
             for i in range(self.resolution):
@@ -648,9 +648,7 @@ class StrokeNotCompletelyTranslationInvariant(Stroke):
 
         images_per_stroke = []
 
-        for s, (length, (right, up), i_offset, j_offset) in enumerate(
-            self.stroke_types
-        ):
+        for length, (right, up), i_offset, j_offset in self.stroke_types:
             i_indexes, j_indexes = compute_index_offsets(
                 length, right, up, i_offset, j_offset
             )
@@ -701,11 +699,13 @@ def get_batch_random_pixels(
     batch_size,
     seq_len,
     num_features,
-    hyperparameters={"max_translation": 0, "draw_prob": 0.5, "noise_std": 0.1},
+    hyperparameters=None,
     device="cpu",
     normalize=False,
     **kwargs,
 ):
+    if hyperparameters is None:
+        hyperparameters = {"max_translation": 0, "draw_prob": 0.5, "noise_std": 0.1}
     res = int(math.sqrt(num_features))
     assert res**2 == num_features, "num_features must be a perfect square"
 
@@ -788,11 +788,13 @@ class DiscreteBayes(torch.nn.Module):
         batch_size,
         seq_len,
         num_features,
-        hyperparameters={},
+        hyperparameters=None,
         device="cpu",
         normalize=False,
         **kwargs,
     ):
+        if hyperparameters is None:
+            hyperparameters = {}
         batch = []
         for _ in range(batch_size):
             latent_options = self.sample_latent_options_type()

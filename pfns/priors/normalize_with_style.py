@@ -13,9 +13,12 @@ def get_batch(
     single_eval_pos,
     epoch,
     device=default_device,
-    hyperparameters={},
+    hyperparameters=None,
     **kwargs,
 ):
+    if hyperparameters is None:
+        hyperparameters = {}
+
     if hyperparameters.get("normalize_x", False):
         uniform_float = torch.rand(tuple()).clamp(0.1, 1.0).item()
         new_hyperparameters = {

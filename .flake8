@@ -12,6 +12,6 @@ ignore = E203, E701, W503, D, E501, E266, E741
 # D417: Missing argument descriptions in the docstring
 # D3*: Quotes issues
 # D207, D208, D214, D215: indentation
-extend-select = D417, D3, D207, D208, D214, D215
+extend-select = D417, D3, D207, D208, D214, D215, B
 exclude =
   build, dist, tutorials, website, .eggs

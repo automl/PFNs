@@ -114,13 +114,16 @@ def load_model_workflow(
     return model, c, results_file
 
 
+default_base_path = pathlib.Path(__file__).parent.parent.resolve()
+
+
 class TabPFNClassifier(BaseEstimator, ClassifierMixin):
     models_in_memory = {}
 
     def __init__(
         self,
         device="cpu",
-        base_path=pathlib.Path(__file__).parent.parent.resolve(),
+        base_path=default_base_path,
         model_string="",
         N_ensemble_configurations=3,
         no_preprocess_mode=False,
@@ -363,7 +366,7 @@ def transformer_predict(
     softmax_temperature=0.0,
     multiclass_decoder="permutation",
     preprocess_transform="mix",
-    categorical_feats=[],
+    categorical_feats=tuple(),
     feature_shift_decoder=False,
     N_ensemble_configurations=10,
     batch_size_inference=16,

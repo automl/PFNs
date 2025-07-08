@@ -136,4 +136,3 @@ The new architecture, which we support via `config.model.features_per_group = <s
   publisher={Nature Publishing Group UK London}
 }
 ```
-

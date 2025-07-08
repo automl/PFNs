@@ -71,7 +71,7 @@ if __name__ == "__main__":
     ls = 0.1
     for alpha in set([ls, ls * 1.1, ls * 0.9]):
         print(alpha)
-        for redo_idx in range(1):
+        for _redo_idx in range(1):
             print(
                 evaluate(
                     *get_batch(1000, 10, noisy_std=ls, num_features=10),

@@ -558,12 +558,12 @@ def get_batch(
                 used_local_x = local_x[..., ~unused_feature_mask]
             else:
                 used_local_x = local_x
-            get_model_and_likelihood = lambda: get_model(  # noqa: E731
+            get_model_and_likelihood = lambda used_local_x: get_model(  # noqa: E731
                 used_local_x,
                 torch.randn(num_candidates, x.shape[1], device=device),
                 hyperparameters,
             )
-            model, likelihood = get_model_and_likelihood()
+            model, likelihood = get_model_and_likelihood(used_local_x)
             if verbose:
                 print(
                     list(model.named_parameters()),
@@ -593,7 +593,7 @@ def get_batch(
                             d = likelihood(sample_wo_noise)
                     except (RuntimeError, ValueError) as e:
                         successful_sample -= 1
-                        model, likelihood = get_model_and_likelihood()
+                        model, likelihood = get_model_and_likelihood(used_local_x)
                         if successful_sample < -100:
                             print(
                                 f"Could not sample from model {i} after {successful_sample} attempts. {e}"

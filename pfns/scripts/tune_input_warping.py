@@ -37,7 +37,7 @@ def fit_lbfgs(x, w, nll, num_grad_steps=10, ignore_prior=True, params0=None):
         w.requires_grad_(True)
         loss = 0.0
         if not ignore_prior:
-            for name, module, prior, closure, _ in w.named_priors():
+            for _name, module, prior, closure, _ in w.named_priors():
                 prior_term = prior.log_prob(closure(module))
                 loss -= prior_term.sum(dim=-1)
         negll = nll(w(x.to(torch.float64)).to(torch.float)).sum()
@@ -120,7 +120,7 @@ def fit_lbfgs_with_restarts(x, w, *args, old_solution=None, rs_size=50, **kwargs
         rs_results.append(
             fit_lbfgs(x, old_solution, *args, **{**kwargs, "num_grad_steps": 0})
         )
-    for i in range(rs_size):
+    for _i in range(rs_size):
         with torch.no_grad():
             w.concentration0[:] = w.concentration0_prior()
             w.concentration1[:] = w.concentration1_prior()

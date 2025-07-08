@@ -198,7 +198,7 @@ def get_batch(batch_size, *args, hyperparameters, get_batch, **kwargs):
 
     sub_batches = []
     sub_hps = []
-    for i in range(num_models):
+    for _i in range(num_models):
         hyperparameters_sample = sample_hyperparameters(hyperparameters)
         sub_batch = get_batch(
             batch_size // num_models,

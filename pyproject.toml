@@ -33,6 +33,7 @@ dependencies=[
         'ruff-api==0.1.0',
         'stdlibs==2024.1.28',
         'pytest>=5.4.3',
+        'flake8-bugbear>=24.0.0',
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

@@ -100,7 +100,7 @@ class PFNOptimizer(AbstractOptimizer):
         self.spaces = []
         self.types = []
 
-        for i, feature in enumerate(self.api_config):
+        for feature in self.api_config:
             # list_of_scalers.append((feature, MinMaxScaler(feature_range),i))
             self.spaces.append(self.api_config[feature].get("space", "bool"))
             self.types.append(self.api_config[feature]["type"])
@@ -366,7 +366,7 @@ class PFNOptimizer(AbstractOptimizer):
                 )
                 opt_X = self.min_max_encode(opt_X)
                 opt_new = ~(opt_X[:, None] == temp_X[None].cpu()).all(-1).any(1)
-                for i, x in enumerate(opt_X):
+                for i, _x in enumerate(opt_X):
                     if opt_new[i]:
                         if self.verbose:
                             print(
@@ -384,7 +384,7 @@ class PFNOptimizer(AbstractOptimizer):
                 )
                 opt_X = self.min_max_encode(opt_X)
                 opt_new = ~(opt_X[:, None] == temp_X[None].cpu()).all(-1).any(1)
-                for i, x in enumerate(opt_X):
+                for i, _x in enumerate(opt_X):
                     if opt_new[i]:
                         if self.verbose:
                             print(
@@ -450,7 +450,7 @@ class PFNOptimizer(AbstractOptimizer):
             else:
                 self.y.append(y[0])
         else:
-            assert False
+            raise ValueError(f"y is nan or inf: {y=}")
 
 
 def test():

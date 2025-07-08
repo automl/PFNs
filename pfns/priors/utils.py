@@ -164,13 +164,16 @@ def randomize_classes(x, num_classes):
     return x
 
 
+default_zipf_sampler = zipf_sampler_f(0.8, 1, 10)
+
+
 class CategoricalActivation(nn.Module):
     def __init__(
         self,
         categorical_p=0.1,
         ordered_p=0.7,
         keep_activation_size=False,
-        num_classes_sampler=zipf_sampler_f(0.8, 1, 10),
+        num_classes_sampler=default_zipf_sampler,
     ):
         self.categorical_p = categorical_p
         self.ordered_p = ordered_p

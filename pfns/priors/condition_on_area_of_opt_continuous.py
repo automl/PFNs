@@ -13,7 +13,7 @@ def get_batch(
     get_batch,
     epoch,
     device=default_device,
-    hyperparameters={},
+    hyperparameters=None,
     **kwargs,
 ):
     """
@@ -37,6 +37,9 @@ def get_batch(
     :param kwargs:
     :return:
     """
+
+    if hyperparameters is None:
+        hyperparameters = {}
 
     maximize = hyperparameters.get("condition_on_area_maximize", True)
     size_range = hyperparameters.get("condition_on_area_size_range", (0.1, 0.5))

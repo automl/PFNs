@@ -42,8 +42,7 @@ class AdhocPriorConfig(PriorConfig):
                 else [self.prior_names]
             ):
                 prior_module = importlib.import_module(f"pfns.priors.{prior_name}")
-                get_batch = getattr(prior_module, "get_batch")
-                get_batch_methods.append(get_batch)
+                get_batch_methods.append(prior_module.get_batch)
         else:
             get_batch_methods = (
                 self.get_batch_methods
@@ -92,50 +91,6 @@ class Batch:
             for f in fields(self)
             if f.name not in set_of_attributes and getattr(self, f.name) is not None
         ]
-
-
-def safe_merge_batches_in_batch_dim(*batches, ignore_attributes=[]):
-    """
-    Merge all supported non-None fields in a pre-specified (general) way,
-    e.g. mutliple batch.x are concatenated in the batch dimension.
-    :param ignore_attributes: attributes to remove from the merged batch, treated as if they were None.
-    :return:
-    """
-    assert False, "This function does not work for batch first yet and should be tested before use."
-    not_none_fields = [
-        f.name
-        for f in fields(batches[0])
-        if f.name not in ignore_attributes and getattr(batches[0], f.name) is not None
-    ]
-    assert all(
-        [
-            set(not_none_fields)
-            == set(
-                [
-                    f.name
-                    for f in fields(b)
-                    if f.name not in ignore_attributes
-                    and getattr(b, f.name) is not None
-                ]
-            )
-            for b in batches
-        ]
-    ), "All batches must have the same fields!"
-    merge_funcs = {
-        "x": lambda xs: torch.cat(xs, 1),
-        "y": lambda ys: torch.cat(ys, 1),
-        "target_y": lambda target_ys: torch.cat(target_ys, 1),
-        "style": lambda styles: torch.cat(styles, 0),
-    }
-    assert all(
-        f in merge_funcs for f in not_none_fields
-    ), "Unknown fields encountered in `safe_merge_batches_in_batch_dim`."
-    return Batch(
-        **{
-            f: merge_funcs[f]([getattr(batch, f) for batch in batches])
-            for f in not_none_fields
-        }
-    )
 
 
 class PriorDataLoader(DataLoader, metaclass=ABCMeta):

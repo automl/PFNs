@@ -545,7 +545,7 @@ def optimize_acq(
     x_eval = torch.rand(num_random_samples, known_x.shape[1]).requires_grad_(True)
     opt = torch.optim.Adam(params=[x_eval], lr=lr)
     best_acq, best_x = -float("inf"), x_eval[0].detach()
-    for grad_step in range(num_grad_steps):
+    for _grad_step in range(num_grad_steps):
         acq = general_acq_function(
             model, known_x, known_y, x_eval, return_actual_ei=True, **kwargs
         )
@@ -574,7 +574,7 @@ def optimize_acq_w_lbfgs(
     pre_sample_size=100_000,
     device="cpu",
     verbose=False,
-    dims_wo_gradient_opt=[],
+    dims_wo_gradient_opt=tuple(),
     rand_sample_func=None,
     **kwargs,
 ):

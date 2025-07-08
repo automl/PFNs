@@ -13,7 +13,7 @@ def get_batch(
     get_batch,
     epoch,
     device=default_device,
-    hyperparameters={},
+    hyperparameters=None,
     **kwargs,
 ):
     """
@@ -34,6 +34,9 @@ def get_batch(
     :param kwargs:
     :return:
     """
+
+    if hyperparameters is None:
+        hyperparameters = {}
 
     max_num_divisions = hyperparameters.get("condition_on_area_max_num_divisions", 5)
     maximize = hyperparameters.get("condition_on_area_maximize", True)

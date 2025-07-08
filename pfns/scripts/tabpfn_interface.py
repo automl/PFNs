@@ -12,7 +12,6 @@ from pfns.utils import (
     normalize_by_used_features_f,
     normalize_data,
     remove_outliers,
-    to_ranking_low_mem,
 )
 from sklearn.base import BaseEstimator, ClassifierMixin
 
@@ -361,7 +360,6 @@ def transformer_predict(
     num_classes=2,
     extend_features=True,
     normalize_with_test=False,
-    normalize_to_ranking=False,
     softmax_temperature=0.0,
     multiclass_decoder="permutation",
     preprocess_transform="mix",
@@ -391,7 +389,6 @@ def transformer_predict(
     :param inference_mode:
     :param num_classes:
     :param extend_features:
-    :param normalize_to_ranking:
     :param softmax_temperature:
     :param multiclass_decoder:
     :param preprocess_transform:
@@ -502,13 +499,9 @@ def transformer_predict(
         eval_xs = eval_xs.unsqueeze(1)
 
         # TODO: Caution there is information leakage when to_ranking is used, we should not use it
-        eval_xs = (
-            remove_outliers(
-                eval_xs,
-                normalize_positions=-1 if normalize_with_test else eval_position,
-            )
-            if not normalize_to_ranking
-            else normalize_data(to_ranking_low_mem(eval_xs))
+        eval_xs = remove_outliers(
+            eval_xs,
+            normalize_positions=-1 if normalize_with_test else eval_position,
         )
         # Rescale X
         eval_xs = normalize_by_used_features_f(
@@ -726,6 +719,5 @@ def get_params_from_config(c):
     return {
         "max_features": c["num_features"],
         "rescale_features": c["normalize_by_used_features"],
-        "normalize_to_ranking": c["normalize_to_ranking"],
         "normalize_with_sqrt": c.get("normalize_with_sqrt", False),
     }

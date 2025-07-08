@@ -526,7 +526,6 @@ def test_separate_train_inference(
         encoder=encoders.SequentialEncoder(
             encoders.InputNormalizationEncoderStep(
                 normalize_on_train_only=True,
-                normalize_to_ranking=False,
                 normalize_x=True,
                 remove_outliers=True,
             ),

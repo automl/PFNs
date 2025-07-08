@@ -56,6 +56,12 @@ class UniformFloatDistConfig(DistributionConfig):
             )
         return (value - self.lower) / (self.upper - self.lower)
 
+    def encode_to_torch(self, value):
+        assert (value >= self.lower) and (
+            value <= self.upper
+        ), f"Value {value} not in range [{self.lower}, {self.upper}]"
+        return value
+
 
 @dataclass(frozen=True)
 class PowerUniformFloatDistConfig(DistributionConfig):
@@ -96,6 +102,12 @@ class PowerUniformFloatDistConfig(DistributionConfig):
             transformed_upper - transformed_lower
         )
 
+    def encode_to_torch(self, value):
+        assert (value >= self.lower) and (
+            value <= self.upper
+        ), f"Value {value} not in range [{self.lower}, {self.upper}]"
+        return value
+
 
 @dataclass(frozen=True)
 class UniformIntegerDistConfig(DistributionConfig):
@@ -122,6 +134,12 @@ class UniformIntegerDistConfig(DistributionConfig):
             )
         return (value - self.lower) / (self.upper - self.lower)
 
+    def encode_to_torch(self, value):
+        assert (value >= self.lower) and (
+            value <= self.upper
+        ), f"Value {value} not in range [{self.lower}, {self.upper}]"
+        return value
+
 
 @dataclass(frozen=True)
 class ChoiceDistConfig(DistributionConfig):
@@ -131,6 +149,9 @@ class ChoiceDistConfig(DistributionConfig):
         return random.choice(self.choices)
 
     def encode_to_torch(self, value: str):
+        assert (
+            value in self.choices
+        ), f"Value {value} not in choices {self.choices}"
         return torch.tensor(self.choices.index(value))
 
     def normalize(self, value: torch.Tensor):
@@ -261,6 +282,7 @@ class HyperparameterNormalizer(torch.nn.Module):
         self, raw_hyperparameters: dict
     ) -> torch.Tensor:
         """Convert a dictionary of hyperparameters to a tensor format.
+        All non-set hyperparameters are set to nan, which means "unknown", if the "hyperparameter_sampling_skip_style_prob" is set > 0.
 
         Args:
             raw_hyperparameters: Dictionary mapping hyperparameter names to their values
@@ -275,25 +297,20 @@ class HyperparameterNormalizer(torch.nn.Module):
         expected_keys = set(self.to_be_encoded_hyperparameters)
         provided_keys = set(raw_hyperparameters.keys())
 
-        # Check for missing and extra keys
-        missing_keys = expected_keys - provided_keys
         extra_keys = provided_keys - expected_keys
 
-        if missing_keys or extra_keys:
-            error_msg = []
-            if missing_keys:
-                error_msg.append(
-                    f"Missing required hyperparameters: {missing_keys}"
-                )
-            if extra_keys:
-                error_msg.append(
-                    f"Unexpected hyperparameters provided: {extra_keys}"
-                )
-            raise ValueError(" AND ".join(error_msg))
+        if extra_keys:
+            raise ValueError(
+                f"Unexpected hyperparameters provided: {extra_keys}"
+            )
 
         # Convert dict to tensor format
         values = [
-            raw_hyperparameters[hp]
+            access_dict_with_path(self.hyperparameters, hp).encode_to_torch(
+                raw_hyperparameters[hp]
+            )
+            if hp in raw_hyperparameters
+            else float("nan")
             for hp in self.to_be_encoded_hyperparameters
         ]
         return torch.tensor([values], dtype=torch.float32)

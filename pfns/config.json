@@ -52,5 +52,5 @@
             "num_candidates": 10,
             "sobol_sampler": 1
         }
-    ],
+    ]
 }

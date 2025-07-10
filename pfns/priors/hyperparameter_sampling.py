@@ -23,13 +23,6 @@ class DistributionConfig(BaseConfig):
     def encode_to_torch(self, value):
         return value
 
-    def sample(self):
-        if self.log:
-            log_lower = math.log(self.lower)
-            log_upper = math.log(self.upper)
-            return math.exp(random.uniform(log_lower, log_upper))
-        return random.uniform(self.lower, self.upper)
-
 
 @dataclass(frozen=True)
 class UniformFloatDistConfig(DistributionConfig):
@@ -149,9 +142,7 @@ class ChoiceDistConfig(DistributionConfig):
         return random.choice(self.choices)
 
     def encode_to_torch(self, value: str):
-        assert (
-            value in self.choices
-        ), f"Value {value} not in choices {self.choices}"
+        assert value in self.choices, f"Value {value} not in choices {self.choices}"
         return torch.tensor(self.choices.index(value))
 
     def normalize(self, value: torch.Tensor):
@@ -278,9 +269,7 @@ class HyperparameterNormalizer(torch.nn.Module):
         self.to_be_encoded_hyperparameters = get_all_styled_hps(self.hyperparameters)
         self.num_hps = len(self.to_be_encoded_hyperparameters)
 
-    def hyperparameters_dict_to_tensor(
-        self, raw_hyperparameters: dict
-    ) -> torch.Tensor:
+    def hyperparameters_dict_to_tensor(self, raw_hyperparameters: dict) -> torch.Tensor:
         """Convert a dictionary of hyperparameters to a tensor format.
         All non-set hyperparameters are set to nan, which means "unknown", if the "hyperparameter_sampling_skip_style_prob" is set > 0.
 
@@ -300,9 +289,7 @@ class HyperparameterNormalizer(torch.nn.Module):
         extra_keys = provided_keys - expected_keys
 
         if extra_keys:
-            raise ValueError(
-                f"Unexpected hyperparameters provided: {extra_keys}"
-            )
+            raise ValueError(f"Unexpected hyperparameters provided: {extra_keys}")
 
         # Convert dict to tensor format
         values = [

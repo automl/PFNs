@@ -1,16 +1,12 @@
 import warnings
 
-from typing import List, Optional, Union
-
 import botorch
 import gpytorch
 import torch
 from botorch.exceptions import InputDataWarning
 
-from gpytorch.constraints import GreaterThan
 from gpytorch.means import ZeroMean
 from gpytorch.priors.torch_priors import GammaPrior, LogNormalPrior, UniformPrior
-from torch import nn
 
 from ..utils import default_device, to_tensor
 

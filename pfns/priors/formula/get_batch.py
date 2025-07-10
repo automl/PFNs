@@ -9,7 +9,6 @@ from .. import Batch
 
 from .ops import binary_ops, unary_ops
 from .trees import evaluate_tree, sample_tree
-from .utils import print_tree
 
 
 def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
@@ -39,9 +38,7 @@ def sample_x(num_samples, num_features, num_tree_leaves, num_constants):
 
     num_dims_left_to_fill = num_tree_leaves - num_constants
     # Sample with replacement to allow redraws and unused features
-    selected_dims = random.choices(
-        range(num_features), k=num_dims_left_to_fill
-    )
+    selected_dims = random.choices(range(num_features), k=num_dims_left_to_fill)
 
     # Map selected dimensions to remaining tree inputs
     if (
@@ -66,9 +63,7 @@ def boring_y(y: torch.Tensor):
         bool: True if the vector is boring, False otherwise
     """
     median = y.median()
-    return (
-        ((y > median + 0.1) | (y < median - 0.1)).sum().item() / len(y)
-    ) < 0.02
+    return (((y > median + 0.1) | (y < median - 0.1)).sum().item() / len(y)) < 0.02
 
 
 # todo get first trainings running
@@ -145,9 +140,7 @@ def sample_dataset(
     max_tree_leave_share = 1.0 + max_share_oversampled_tree_leaves
     max_num_tree_leaves = int(num_features * max_tree_leave_share)
 
-    num_tree_leaves = random.randint(
-        max(num_features, 2), max(max_num_tree_leaves, 2)
-    )
+    num_tree_leaves = random.randint(max(num_features, 2), max(max_num_tree_leaves, 2))
 
     num_constants = random.randint(
         round(min_constant_share * num_tree_leaves),
@@ -184,9 +177,7 @@ def sample_dataset(
             else:
                 raise ValueError(f"Unknown factor distribution: {factor_dist}")
 
-        return get_sample(factor_dist, factor_std), get_sample(
-            bias_dist, bias_std
-        )
+        return get_sample(factor_dist, factor_std), get_sample(bias_dist, bias_std)
 
     unary_noise_std = random.random() * max_unary_op_noise_std
     binary_noise_std = random.random() * max_binary_op_noise_std
@@ -213,9 +204,7 @@ def sample_dataset(
     # print(leaf_indices)
     # print("Num Constants:", num_constants, "Num Tree Leaves:", num_tree_leaves)
 
-    x, tree_inputs = sample_x(
-        num_samples, num_features, num_tree_leaves, num_constants
-    )
+    x, tree_inputs = sample_x(num_samples, num_features, num_tree_leaves, num_constants)
     y = evaluate_tree(tree, tree_inputs)
 
     return x, y, tree

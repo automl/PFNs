@@ -2,7 +2,6 @@ import random
 from typing import Callable, List, Tuple
 
 import numpy as np
-import numpy.typing as npt
 import torch
 
 from .ops import binary_ops, unary_ops
@@ -99,7 +98,7 @@ def sample_tree(
 
     # Default factor_bias_sampler returns 1.0 for factors and 0.0 for biases
     if factor_bias_sampler is None:
-        factor_bias_sampler = lambda op, num_inputs: (
+        factor_bias_sampler = lambda op, num_inputs: (  # noqa: E731
             [1.0] * num_inputs,  # factors
             [0.0] * num_inputs,  # biases
         )
@@ -107,7 +106,7 @@ def sample_tree(
     if node_noise_sampler is None:
         node_noise_sampler = (
             lambda node_type, op_or_input: 0.0
-        )  # Default: no noise
+        )  # Default: no noise  # noqa: E731
 
     # Handle base case: single leaf
     if num_leaves == 1:
@@ -246,9 +245,7 @@ def sample_tree(
         for i in range(len(tree_nodes)):
             current_node_tuple = tree_nodes[i]
             node_type = current_node_tuple["type"]  # type is at index 0
-            op_or_input = current_node_tuple[
-                "op_or_input"
-            ]  # op_or_input is at index 1
+            op_or_input = current_node_tuple["op_or_input"]  # op_or_input is at index 1
 
             actual_noise_std = node_noise_sampler(node_type, op_or_input)
             tree_nodes[i]["noise_std"] = actual_noise_std
@@ -284,9 +281,7 @@ def evaluate_tree(
         input_idx: int = int(node["op_or_input"])
         result = inputs[:, input_idx]
         if node["print"] == "yes":
-            print(
-                f"Leaf node {node_idx} (input {input_idx}) unnormalized: {result}"
-            )
+            print(f"Leaf node {node_idx} (input {input_idx}) unnormalized: {result}")
 
     elif node_type == "unary":
         # Unary node: apply unary operation to child
@@ -298,17 +293,13 @@ def evaluate_tree(
 
         # Apply factor and bias to the child value
         child_value = evaluate_tree(tree, inputs, child_idx)
-        transformed_value = (
-            node["factor_left"] * child_value + node["bias_left"]
-        )
+        transformed_value = node["factor_left"] * child_value + node["bias_left"]
 
         # Apply the unary operation
         result = unary_ops[op_name](transformed_value)
 
         if node["print"] == "yes":
-            print(
-                f"Unary node {node_idx} (op {op_name}) unnormalized: {result}"
-            )
+            print(f"Unary node {node_idx} (op {op_name}) unnormalized: {result}")
 
     elif node_type == "binary":
         # Binary node: apply binary operation to children
@@ -325,17 +316,13 @@ def evaluate_tree(
 
         # Apply factors and biases
         transformed_left = node["factor_left"] * left_value + node["bias_left"]
-        transformed_right = (
-            node["factor_right"] * right_value + node["bias_right"]
-        )
+        transformed_right = node["factor_right"] * right_value + node["bias_right"]
 
         # Apply the binary operation
         result = binary_ops[op_name](transformed_left, transformed_right)
 
         if node["print"] == "yes":
-            print(
-                f"Binary node {node_idx} (op {op_name}) unnormalized: {result}"
-            )
+            print(f"Binary node {node_idx} (op {op_name}) unnormalized: {result}")
             print(f"left: {transformed_left}, right: {transformed_right}")
     else:
         raise ValueError(f"Unknown node type: {node_type}")

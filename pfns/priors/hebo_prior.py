@@ -7,16 +7,6 @@ import gpytorch
 import torch
 from botorch.exceptions import InputDataWarning
 
-# Explicitly import all undefined things used in this file from botorch.models.transforms.input
-from botorch.models.transforms.input import (
-    BotorchTensorDimensionError,
-    expand_and_copy_tensor,
-    fantasize,
-    InputTransform,
-    Kumaraswamy,
-    Prior,
-    Tensor,
-)
 from gpytorch.constraints import GreaterThan
 from gpytorch.means import ZeroMean
 from gpytorch.priors.torch_priors import GammaPrior, LogNormalPrior, UniformPrior
@@ -26,261 +16,6 @@ from ..utils import default_device, to_tensor
 
 from . import utils
 from .prior import Batch
-
-
-class Warp(gpytorch.Module):
-    r"""A transform that uses learned input warping functions.
-
-    Each specified input dimension is warped using the CDF of a
-    Kumaraswamy distribution. Typically, MAP estimates of the
-    parameters of the Kumaraswamy distribution, for each input
-    dimension, are learned jointly with the GP hyperparameters.
-
-    for each output in batched multi-output and multi-task models.
-
-    For now, ModelListGPs should be used to learn independent warping
-    functions for each output.
-    """
-
-    _min_concentration_level = 1e-4
-
-    def __init__(
-        self,
-        indices: List[int],
-        transform_on_train: bool = True,
-        transform_on_eval: bool = True,
-        transform_on_fantasize: bool = True,
-        reverse: bool = False,
-        eps: float = 1e-7,
-        concentration1_prior: Optional[Prior] = None,
-        concentration0_prior: Optional[Prior] = None,
-        batch_shape: Optional[torch.Size] = None,
-    ) -> None:
-        r"""Initialize transform.
-
-        Args:
-            indices: The indices of the inputs to warp.
-            transform_on_train: A boolean indicating whether to apply the
-                transforms in train() mode. Default: True.
-            transform_on_eval: A boolean indicating whether to apply the
-                transform in eval() mode. Default: True.
-            transform_on_fantasize: A boolean indicating whether to apply the
-                transform when called from within a `fantasize` call. Default: True.
-            reverse: A boolean indicating whether the forward pass should untransform
-                the inputs.
-            eps: A small value used to clip values to be in the interval (0, 1).
-            concentration1_prior: A prior distribution on the concentration1 parameter
-                of the Kumaraswamy distribution.
-            concentration0_prior: A prior distribution on the concentration0 parameter
-                of the Kumaraswamy distribution.
-            batch_shape: The batch shape.
-        """
-        super().__init__()
-        self.register_buffer("indices", torch.tensor(indices, dtype=torch.long))
-        self.transform_on_train = transform_on_train
-        self.transform_on_eval = transform_on_eval
-        self.transform_on_fantasize = transform_on_fantasize
-        self.reverse = reverse
-        self.batch_shape = batch_shape or torch.Size([])
-        self._X_min = eps
-        self._X_range = 1 - 2 * eps
-        if len(self.batch_shape) > 0:
-            # Note: this follows the gpytorch shape convention for lengthscales
-            # There is ongoing discussion about the extra `1`.
-            # https://github.com/cornellius-gp/gpytorch/issues/1317
-            batch_shape = self.batch_shape + torch.Size([1])
-        else:
-            batch_shape = self.batch_shape
-        for i in (0, 1):
-            p_name = f"concentration{i}"
-            self.register_parameter(
-                p_name,
-                nn.Parameter(torch.full(batch_shape + self.indices.shape, 1.0)),
-            )
-        if concentration0_prior is not None:
-
-            def closure(m):
-                # print(m.concentration0)
-                return m.concentration0
-
-            self.register_prior(
-                "concentration0_prior",
-                concentration0_prior,
-                closure,
-                lambda m, v: m._set_concentration(i=0, value=v),
-            )
-        if concentration1_prior is not None:
-
-            def closure(m):
-                # print(m.concentration1)
-                return m.concentration1
-
-            self.register_prior(
-                "concentration1_prior",
-                concentration1_prior,
-                closure,
-                lambda m, v: m._set_concentration(i=1, value=v),
-            )
-        for i in (0, 1):
-            p_name = f"concentration{i}"
-            constraint = GreaterThan(
-                self._min_concentration_level,
-                transform=None,
-                # set the initial value to be the identity transformation
-                initial_value=1.0,
-            )
-            self.register_constraint(param_name=p_name, constraint=constraint)
-
-    def _set_concentration(self, i: int, value: Union[float, Tensor]) -> None:
-        if not torch.is_tensor(value):
-            value = torch.as_tensor(value).to(self.concentration0)
-        self.initialize(**{f"concentration{i}": value})
-
-    def _transform(self, X: Tensor) -> Tensor:
-        r"""Warp the inputs through the Kumaraswamy CDF.
-
-        Args:
-            X: A `input_batch_shape x (batch_shape) x n x d`-dim tensor of inputs.
-                batch_shape here can either be self.batch_shape or 1's such that
-                it is broadcastable with self.batch_shape if self.batch_shape is set.
-
-        Returns:
-            A `input_batch_shape x (batch_shape) x n x d`-dim tensor of transformed
-                inputs.
-        """
-        X_tf = expand_and_copy_tensor(X=X, batch_shape=self.batch_shape)
-        k = Kumaraswamy(
-            concentration1=self.concentration1,
-            concentration0=self.concentration0,
-        )
-        # normalize to [eps, 1-eps]
-        X_tf[..., self.indices] = k.cdf(
-            torch.clamp(
-                X_tf[..., self.indices] * self._X_range + self._X_min,
-                self._X_min,
-                1.0 - self._X_min,
-            )
-        )
-        return X_tf
-
-    def _untransform(self, X: Tensor) -> Tensor:
-        r"""Warp the inputs through the Kumaraswamy inverse CDF.
-
-        Args:
-            X: A `input_batch_shape x batch_shape x n x d`-dim tensor of inputs.
-
-        Returns:
-            A `input_batch_shape x batch_shape x n x d`-dim tensor of transformed
-                inputs.
-        """
-        if len(self.batch_shape) > 0:
-            if self.batch_shape != X.shape[-2 - len(self.batch_shape) : -2]:
-                raise BotorchTensorDimensionError(
-                    "The right most batch dims of X must match self.batch_shape: "
-                    f"({self.batch_shape})."
-                )
-        X_tf = X.clone()
-        k = Kumaraswamy(
-            concentration1=self.concentration1,
-            concentration0=self.concentration0,
-        )
-        # unnormalize from [eps, 1-eps] to [0,1]
-        X_tf[..., self.indices] = (
-            (k.icdf(X_tf[..., self.indices]) - self._X_min) / self._X_range
-        ).clamp(0.0, 1.0)
-        return X_tf
-
-    def transform(self, X: Tensor) -> Tensor:
-        r"""Transform the inputs.
-
-        Args:
-            X: A `batch_shape x n x d`-dim tensor of inputs.
-
-        Returns:
-            A `batch_shape x n x d`-dim tensor of transformed inputs.
-        """
-        return self._untransform(X) if self.reverse else self._transform(X)
-
-    def untransform(self, X: Tensor) -> Tensor:
-        r"""Un-transform the inputs.
-
-        Args:
-            X: A `batch_shape x n x d`-dim tensor of inputs.
-
-        Returns:
-            A `batch_shape x n x d`-dim tensor of un-transformed inputs.
-        """
-        return self._transform(X) if self.reverse else self._untransform(X)
-
-    def equals(self, other: InputTransform) -> bool:
-        r"""Check if another input transform is equivalent.
-
-        Note: The reason that a custom equals method is defined rather than
-        defining an __eq__ method is because defining an __eq__ method sets
-        the __hash__ method to None. Hashing modules is currently used in
-        pytorch. See https://github.com/pytorch/pytorch/issues/7733.
-
-        Args:
-            other: Another input transform.
-
-        Returns:
-            A boolean indicating if the other transform is equivalent.
-        """
-        other_state_dict = other.state_dict()
-        return (
-            type(self) is type(other)
-            and (self.transform_on_train == other.transform_on_train)
-            and (self.transform_on_eval == other.transform_on_eval)
-            and (self.transform_on_fantasize == other.transform_on_fantasize)
-            and all(
-                torch.allclose(v, other_state_dict[k].to(v))
-                for k, v in self.state_dict().items()
-            )
-        )
-
-    def preprocess_transform(self, X: Tensor) -> Tensor:
-        r"""Apply transforms for preprocessing inputs.
-
-        The main use cases for this method are 1) to preprocess training data
-        before calling `set_train_data` and 2) preprocess `X_baseline` for noisy
-        acquisition functions so that `X_baseline` is "preprocessed" with the
-        same transformations as the cached training inputs.
-
-        Args:
-            X: A `batch_shape x n x d`-dim tensor of inputs.
-
-        Returns:
-            A `batch_shape x n x d`-dim tensor of (transformed) inputs.
-        """
-        if self.transform_on_train:
-            # We need to disable learning of bounds here.
-            # See why: https://github.com/pytorch/botorch/issues/1078.
-            if hasattr(self, "learn_bounds"):
-                learn_bounds = self.learn_bounds
-                self.learn_bounds = False
-                result = self.transform(X)
-                self.learn_bounds = learn_bounds
-                return result
-            else:
-                return self.transform(X)
-        return X
-
-    def forward(self, X: Tensor) -> Tensor:
-        r"""Transform the inputs to a model.
-
-        Args:
-            X: A `batch_shape x n x d`-dim tensor of inputs.
-
-        Returns:
-            A `batch_shape x n' x d`-dim tensor of transformed inputs.
-        """
-        if self.training:
-            if self.transform_on_train:
-                return self.transform(X)
-        elif self.transform_on_eval:
-            if fantasize.off() or self.transform_on_fantasize:
-                return self.transform(X)
-        return X
 
 
 def constraint_based_on_distribution_support(
@@ -349,9 +84,7 @@ def _compute_gamma_params(
         rate = mean / variance
         return concentration, rate
     else:
-        raise ValueError(
-            "Must provide either (mean, std) or (concentration, rate)"
-        )
+        raise ValueError("Must provide either (mean, std) or (concentration, rate)")
 
 
 def get_model(x, y, hyperparameters: dict, sample=True):
@@ -443,29 +176,6 @@ def get_model(x, y, hyperparameters: dict, sample=True):
         )
         covar_module = covar_module + lincovar_module
 
-    if hyperparameters.get("hebo_warping", False):
-        # initialize input_warping transformation
-        warp_tf = Warp(
-            indices=list(range(num_features)),
-            # use a prior with median at 1.
-            # when a=1 and b=1, the Kumaraswamy CDF is the identity function
-            concentration1_prior=LogNormalPrior(
-                torch.tensor(0.0, device=device),
-                torch.tensor(
-                    hyperparameters.get("hebo_input_warping_c1_std", 0.75),
-                    device=device,
-                ),
-            ),
-            concentration0_prior=LogNormalPrior(
-                torch.tensor(0.0, device=device),
-                torch.tensor(
-                    hyperparameters.get("hebo_input_warping_c0_std", 0.75),
-                    device=device,
-                ),
-            ),
-        )
-    else:
-        warp_tf = None
     # assume mean 0 always!
     if len(y.shape) < len(x.shape):
         y = y.unsqueeze(-1)
@@ -477,7 +187,6 @@ def get_model(x, y, hyperparameters: dict, sample=True):
             y,
             likelihood=likelihood,
             covar_module=covar_module,
-            input_transform=warp_tf,
         )
     model.mean_module = ZeroMean(x.shape[:-2])
     model.to(device)

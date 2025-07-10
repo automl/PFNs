@@ -44,7 +44,7 @@ def test_distribution_normalizers():
         # we don't test the integer distributions because they are not **really** uniform
     ]
 
-    n_samples = 100_000
+    n_samples = 1_000_000
     for dist, name in test_cases:
         # Generate samples
         samples = [dist.sample() for _ in range(n_samples)]

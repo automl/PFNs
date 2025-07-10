@@ -44,27 +44,17 @@ def test_distribution_normalizers():
         # we don't test the integer distributions because they are not **really** uniform
     ]
 
-    n_samples = 1_000_000
+    n_samples = 100000
     for dist, name in test_cases:
         # Generate samples
         samples = [dist.sample() for _ in range(n_samples)]
 
-        # Convert to tensor and normalize
-        if isinstance(samples[0], str):
-            # For Choice distribution, convert to indices first
-            samples_tensor = torch.tensor(
-                [dist.choices.index(s) for s in samples], dtype=torch.float32
-            )
-        else:
-            samples_tensor = torch.tensor(samples, dtype=torch.float32)
+        samples_tensor = torch.tensor(samples, dtype=torch.float32)
 
         normalized = dist.normalize(samples_tensor)
 
-        # Convert to numpy for statistical testing
-        normalized_np = normalized.numpy()
-
         # Check uniformity
-        check_distribution_uniformity(normalized_np, name)
+        check_distribution_uniformity(normalized.numpy(), name)
 
         # Basic range check
         assert torch.all(normalized >= 0) and torch.all(

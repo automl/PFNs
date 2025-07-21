@@ -3,9 +3,10 @@ import math
 
 import scipy
 import torch
-from sklearn.preprocessing import PowerTransformer
 
 from pfns.model import bar_distribution
+from sklearn.preprocessing import PowerTransformer
+
 from ..utils import to_tensor
 
 

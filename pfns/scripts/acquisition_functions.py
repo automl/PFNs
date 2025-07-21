@@ -5,7 +5,7 @@ import scipy
 import torch
 from sklearn.preprocessing import PowerTransformer
 
-from .. import bar_distribution, transformer
+from pfns.model import bar_distribution
 from ..utils import to_tensor
 
 
@@ -112,7 +112,7 @@ def general_power_transform(x_train, x_apply, eps, less_safe=False):
 
 # @torch.inference_mode()
 def general_acq_function(
-    model: transformer.TransformerModel,
+    model,
     x_given,
     y_given,
     x_eval,

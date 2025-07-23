@@ -8,7 +8,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from .train import MainConfig, train
+import pfns.train
 
 
 def parse_args():
@@ -48,7 +48,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_config_from_python(config_file: str) -> MainConfig:
+def load_config_from_python(config_file: str) -> pfns.train.MainConfig:
     """Load MainConfig from a Python file by accessing the 'config' variable."""
     config_path = Path(config_file)
 
@@ -87,9 +87,9 @@ def load_config_from_python(config_file: str) -> MainConfig:
             config = config_module.config
 
             # Validate that it is a MainConfig instance
-            if not isinstance(config, MainConfig):
+            if not isinstance(config, pfns.train.MainConfig):
                 raise TypeError(
-                    f"'config' variable must be a MainConfig instance, got {type(config)}"
+                    f"'config' variable must be a MainConfig instance, got {config.__class__.__name__}"
                 )
 
             print(f"Successfully loaded config from {config_file}")
@@ -136,7 +136,7 @@ def main():
         print(f"  Mixed precision: {config.train_mixed_precision}")
 
         # Start training
-        result = train(
+        result = pfns.train.train(
             c=config,
             device=args.device,
         )

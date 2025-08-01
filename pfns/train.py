@@ -300,13 +300,16 @@ def train(
             else:
                 val_score_str = ""
 
-            
             epoch_time = time.time() - epoch_start_time
             if device.startswith("cuda"):
                 max_gpu_mem_gb = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
             else:
                 max_gpu_mem_gb = None
-            current_lr = scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']
+            current_lr = (
+                scheduler.get_last_lr()[0]
+                if scheduler is not None
+                else optimizer.param_groups[0]["lr"]
+            )
 
             if c.verbose:
                 print("-" * 89)
@@ -327,17 +330,21 @@ def train(
                 writer.add_scalar("epoch/epoch_time", epoch_time, epoch)
                 writer.add_scalar("epoch/data_time", epoch_result.data_time, epoch)
                 writer.add_scalar("epoch/step_time", epoch_result.step_time, epoch)
-                writer.add_scalar("epoch/forward_time", epoch_result.forward_time, epoch)
+                writer.add_scalar(
+                    "epoch/forward_time", epoch_result.forward_time, epoch
+                )
                 writer.add_scalar("epoch/nan_share", epoch_result.nan_share, epoch)
-                writer.add_scalar("epoch/ignore_share", epoch_result.ignore_share, epoch)
-                
+                writer.add_scalar(
+                    "epoch/ignore_share", epoch_result.ignore_share, epoch
+                )
+
                 # Log learning rate
                 writer.add_scalar("epoch/learning_rate", current_lr, epoch)
-                
+
                 # Log GPU memory if available
                 if device.startswith("cuda"):
                     writer.add_scalar("epoch/max_gpu_memory_gb", max_gpu_mem_gb, epoch)
-                
+
                 # Log validation loss if available
                 if c.validation_period is not None and (
                     (epoch % c.validation_period == 0)
@@ -370,11 +377,11 @@ def train(
                 data_loader = None
             if writer:
                 writer.close()
-            return {
-                "total_loss": total_loss,
-                "model": model.to("cpu"),
-                "total_time": time.time() - total_start_time,
-            }
+    return {
+        "total_loss": total_loss,
+        "model": model.to("cpu"),
+        "total_time": time.time() - total_start_time,
+    }
 
 
 # we could think about removing c as arg here to make the dep's clearer

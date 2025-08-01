@@ -39,6 +39,11 @@ We use a CI, the parts of which you can run before locally:
 Check out our [Getting Started Colab](https://colab.research.google.com/drive/12YpI99LkuFeWcuYHt_idl142DqX7AaJf).
 
 
+### Running actual, proper trainings from the command-line
+
+We have a cli, which is documented [here](TRAINING_CLI_README.md).
+
+
 ### What is in this package?
 
 - Code to train models with a variety of priors

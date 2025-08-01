@@ -122,4 +122,7 @@ config = MainConfig(
     steps_per_epoch=steps_per_epoch,
     num_workers=num_workers,
     train_mixed_precision=False,
+    tensorboard_path="runs/example_config_experiment0",  # or any path you prefer
 )
+
+# View with: tensorboard --logdir=runs

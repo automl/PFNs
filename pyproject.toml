@@ -34,6 +34,7 @@ dependencies=[
         'stdlibs==2024.1.28',
         'pytest>=5.4.3',
         'flake8-bugbear>=24.0.0',
+        'tensorboard>=2.20.0',
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

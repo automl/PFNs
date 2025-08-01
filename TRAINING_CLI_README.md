@@ -186,6 +186,11 @@ python run_training.py example_config.py --checkpoint-path ./my_models/model.pt
 EPOCHS=200 USE_GPU=true python run_training.py dynamic_config.py
 ```
 
+## Adding tensorboard
+
+You can add tensorboards by passing a `tensorboard_path` in the `MainConfig`.
+You can then view your training logs by starting the tensorboard with `tensorboard --logdir YOUR_TENSOR_BOARD_PATH`.
+
 ## Error Handling
 
 The CLI provides informative error messages for common issues:

@@ -12,6 +12,7 @@ import einops
 import torch
 from torch import nn
 from torch.amp import autocast, GradScaler
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from . import base_config, utils
@@ -63,6 +64,7 @@ class MainConfig(base_config.BaseConfig):
     # Logging
     verbose: bool = True
     progress_bar: bool = False
+    tensorboard_path: tp.Optional[str] = None
 
     # Data loading
     dataloader_class: str | None = None
@@ -91,6 +93,12 @@ def train(
         device = default_device
     using_dist, rank, device = init_dist(device)
     print(f"ALL: Using device {device}.")
+
+    # Initialize Tensorboard writer
+    writer = None
+    if c.tensorboard_path is not None and rank == 0:
+        writer = SummaryWriter(c.tensorboard_path)
+        print(f"Tensorboard logging to: {c.tensorboard_path}")
 
     # Resolve dataloader_class string to actual class
     if c.dataloader_class is None:
@@ -252,6 +260,8 @@ def train(
                     rank=rank,
                     using_dist=using_dist,
                     training=True,
+                    writer=writer,
+                    epoch=epoch,
                 )
                 total_loss = epoch_result.loss
                 data_loader.importance_sampling_infos = (
@@ -282,28 +292,59 @@ def train(
                         rank=rank,
                         using_dist=using_dist,
                         training=False,
+                        writer=None,  # Don't log step-level info for validation
+                        epoch=epoch,
                     )
                     val_score_str = f"| eval mean loss {val_epoch_result.loss:5.2f} "
 
             else:
                 val_score_str = ""
 
+            
+            epoch_time = time.time() - epoch_start_time
+            if device.startswith("cuda"):
+                max_gpu_mem_gb = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
+            else:
+                max_gpu_mem_gb = None
+            current_lr = scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']
+
             if c.verbose:
                 print("-" * 89)
                 print(
-                    f"| end of epoch {epoch:3d} | time: {(time.time() - epoch_start_time):5.2f}s | mean loss {epoch_result.loss:5.2f} "
+                    f"| end of epoch {epoch:3d} | time: {epoch_time:5.2f}s | mean loss {epoch_result.loss:5.2f} "
                     + f"{val_score_str}"
-                    + f"| lr {scheduler.get_last_lr()[0] if scheduler is not None else optimizer.param_groups[0]['lr']} "
+                    + f"| lr {current_lr} "
                     + f"| data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f} "
                     + f"forward time {epoch_result.forward_time:5.2f} "
-                    + (
-                        f"| max gpu mem {torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024:.2f}GiB "
-                        if device.startswith("cuda")
-                        else ""
-                    )
+                    + f"| max gpu mem {f'{max_gpu_mem_gb:.1f}' if max_gpu_mem_gb is not None else 'N/A'} GiB "
                     + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
                 )
                 print("-" * 89)
+
+            # Log epoch metrics to Tensorboard
+            if writer:
+                writer.add_scalar("epoch/train_loss", epoch_result.loss, epoch)
+                writer.add_scalar("epoch/epoch_time", epoch_time, epoch)
+                writer.add_scalar("epoch/data_time", epoch_result.data_time, epoch)
+                writer.add_scalar("epoch/step_time", epoch_result.step_time, epoch)
+                writer.add_scalar("epoch/forward_time", epoch_result.forward_time, epoch)
+                writer.add_scalar("epoch/nan_share", epoch_result.nan_share, epoch)
+                writer.add_scalar("epoch/ignore_share", epoch_result.ignore_share, epoch)
+                
+                # Log learning rate
+                writer.add_scalar("epoch/learning_rate", current_lr, epoch)
+                
+                # Log GPU memory if available
+                if device.startswith("cuda"):
+                    writer.add_scalar("epoch/max_gpu_memory_gb", max_gpu_mem_gb, epoch)
+                
+                # Log validation loss if available
+                if c.validation_period is not None and (
+                    (epoch % c.validation_period == 0)
+                    or (epoch == c.epochs)
+                    or (epoch == 1)
+                ):
+                    writer.add_scalar("epoch/val_loss", val_epoch_result.loss, epoch)
 
             if scheduler is not None:
                 scheduler.step()
@@ -321,17 +362,19 @@ def train(
     except KeyboardInterrupt:
         print("Training interrupted by user.")
         pass
-
-    if rank == 0:  # trivially true for non-parallel training
-        set_model_to(model, optimizer, "eval")
-        if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-            model = model.module
-            data_loader = None
-        return {
-            "total_loss": total_loss,
-            "model": model.to("cpu"),
-            "total_time": time.time() - total_start_time,
-        }
+    finally:
+        if rank == 0:  # trivially true for non-parallel training
+            set_model_to(model, optimizer, "eval")
+            if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+                model = model.module
+                data_loader = None
+            if writer:
+                writer.close()
+            return {
+                "total_loss": total_loss,
+                "model": model.to("cpu"),
+                "total_time": time.time() - total_start_time,
+            }
 
 
 # we could think about removing c as arg here to make the dep's clearer
@@ -346,6 +389,8 @@ def train_or_evaluate_epoch(
     rank: int,
     using_dist: bool,
     training: bool = True,
+    writer: SummaryWriter | None = None,
+    epoch: int = 1,
 ):
     """
     Train or evaluate one epoch.
@@ -496,14 +541,22 @@ def train_or_evaluate_epoch(
                 print(e)
                 raise (e)
 
+        mean_loss = metrics.total_loss / (batch_index + 1)
         if tqdm_iter:
             tqdm_iter.set_postfix(
                 {
                     "data_time": time_to_get_batch,
                     "step_time": step_time,
-                    "mean_loss": metrics.total_loss / (batch_index + 1),
+                    "mean_loss": mean_loss,
                 }
             )
+
+        # Log step-level metrics every 10 steps for training
+        if writer and training and (batch_index % 10 == 0):
+            global_step = (epoch - 1) * len(dl) + batch_index
+            writer.add_scalar("step/data_time", time_to_get_batch, global_step)
+            writer.add_scalar("step/step_time", step_time, global_step)
+            writer.add_scalar("step/mean_loss", mean_loss, global_step)
 
         before_get_batch = time.time()
 

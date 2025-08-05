@@ -5,6 +5,7 @@ Command-line interface for training PFNs models.
 
 import argparse
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -32,17 +33,10 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--checkpoint-path",
+        "--checkpoint-save-load-prefix",
         type=str,
         default=None,
-        help="Path to save/load checkpoint (overrides config setting)",
-    )
-
-    parser.add_argument(
-        "--load-checkpoint",
-        type=str,
-        default=None,
-        help="Path to load checkpoint from (overrides config setting)",
+        help="Path to save/load checkpoint and for tensorboard.",
     )
 
     return parser.parse_args()
@@ -111,22 +105,30 @@ def main():
     # Load configuration from Python file
     config = load_config_from_python(args.config_file)
 
-    # Override checkpoint paths if specified via CLI
-    if args.checkpoint_path is not None:
-        config = config.__class__(
-            **{
-                **config.__dict__,
-                "train_state_dict_save_path": args.checkpoint_path,
-            }
-        )
+    def get_filename(config_file):
+        return f"{config_file.split('/')[-1].split('.')[0]}"
 
-    if args.load_checkpoint is not None:
+    # Override checkpoint paths if specified via CLI
+    if args.checkpoint_save_load_prefix is not None:
+        assert (
+            config.train_state_dict_save_path is None
+        ), "train_state_dict_save_path is already set"
+        assert (
+            config.train_state_dict_load_path is None
+        ), "train_state_dict_load_path is already set"
+        assert config.tensorboard_path is None, "tensorboard_path is already set"
+
+        path = f"{args.checkpoint_save_load_prefix}/{get_filename(args.config_file)}"
+
         config = config.__class__(
             **{
                 **config.__dict__,
-                "train_state_dict_load_path": args.load_checkpoint,
+                "train_state_dict_save_path": path + "/checkpoint.pt",
+                "train_state_dict_load_path": path + "/checkpoint.pt",
+                "tensorboard_path": path + "/tensorboard",
             }
         )
+        os.makedirs(path, exist_ok=True)
 
     # We overwrite the config with the one from the checkpoint if it exists
     # as there is some randomness in the config and we want to use the exact
@@ -153,8 +155,8 @@ def main():
     print(f"Total training time: {result['total_time']:.2f} seconds")
     print(f"Final loss: {result['total_loss']:.6f}")
 
-    if args.checkpoint_path:
-        print(f"Model saved to: {args.checkpoint_path}")
+    if config.train_state_dict_save_path is not None:
+        print(f"Model saved to: {config.train_state_dict_save_path}")
 
 
 if __name__ == "__main__":

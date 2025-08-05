@@ -108,49 +108,53 @@ def main():
     """Main CLI entry point."""
     args = parse_args()
 
+    # Load configuration from Python file
+    config = load_config_from_python(args.config_file)
+
+    # Override checkpoint paths if specified via CLI
+    if args.checkpoint_path is not None:
+        config = config.__class__(
+            **{
+                **config.__dict__,
+                "train_state_dict_save_path": args.checkpoint_path,
+            }
+        )
+
+    if args.load_checkpoint is not None:
+        config = config.__class__(
+            **{
+                **config.__dict__,
+                "train_state_dict_load_path": args.load_checkpoint,
+            }
+        )
+
+    # We overwrite the config with the one from the checkpoint if it exists
+    # as there is some randomness in the config and we want to use the exact
+    # same config again.
+    if pfns.train.should_load_checkpoint(config):
+        config = pfns.train.load_config(config.train_state_dict_load_path)
+
+    print("Starting training with configuration:")
+    print(f"  Epochs: {config.epochs}")
+    print(f"  Steps per epoch: {config.steps_per_epoch}")
+    print(f"  Device: {args.device or 'auto-detect'}")
+    print(f"  Mixed precision: {config.train_mixed_precision}")
+
     try:
-        # Load configuration from Python file
-        config = load_config_from_python(args.config_file)
-
-        # Override checkpoint paths if specified via CLI
-        if args.checkpoint_path is not None:
-            config = config.__class__(
-                **{
-                    **config.__dict__,
-                    "train_state_dict_save_path": args.checkpoint_path,
-                }
-            )
-
-        if args.load_checkpoint is not None:
-            config = config.__class__(
-                **{
-                    **config.__dict__,
-                    "train_state_dict_load_path": args.load_checkpoint,
-                }
-            )
-
-        print("Starting training with configuration:")
-        print(f"  Epochs: {config.epochs}")
-        print(f"  Steps per epoch: {config.steps_per_epoch}")
-        print(f"  Device: {args.device or 'auto-detect'}")
-        print(f"  Mixed precision: {config.train_mixed_precision}")
-
-        # Start training
         result = pfns.train.train(
             c=config,
             device=args.device,
         )
-
-        print("\nTraining completed successfully!")
-        print(f"Total training time: {result['total_time']:.2f} seconds")
-        print(f"Final loss: {result['total_loss']:.6f}")
-
-        if args.checkpoint_path:
-            print(f"Model saved to: {args.checkpoint_path}")
-
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
         sys.exit(1)
+
+    print("\nTraining completed successfully!")
+    print(f"Total training time: {result['total_time']:.2f} seconds")
+    print(f"Final loss: {result['total_loss']:.6f}")
+
+    if args.checkpoint_path:
+        print(f"Model saved to: {args.checkpoint_path}")
 
 
 if __name__ == "__main__":

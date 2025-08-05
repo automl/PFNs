@@ -122,7 +122,9 @@ config = MainConfig(
     steps_per_epoch=steps_per_epoch,
     num_workers=num_workers,
     train_mixed_precision=False,
-    tensorboard_path="runs/example_config_experiment0",  # or any path you prefer
+    tensorboard_path="runs/example_config_experiment0/tb",  # or any path you prefer
+    train_state_dict_save_path="runs/example_config_experiment0/model.pt",
+    train_state_dict_load_path="runs/example_config_experiment0/model.pt",  # they are the same for pre-emption style schedulers
 )
 
 # View with: tensorboard --logdir=runs

@@ -207,23 +207,19 @@ def train(
 
     start_epoch = 1  # Default start epoch
 
-    if c.train_state_dict_load_path:
-        if (c.train_state_dict_save_path != c.train_state_dict_load_path) or (
-            (c.train_state_dict_save_path == c.train_state_dict_load_path)
-            and os.path.exists(c.train_state_dict_load_path)
-        ):
-            # load_checkpoint needs the scheduler instance, not the factory
-            start_epoch = load_checkpoint(  # load_checkpoint might return start_epoch
-                model,
-                optimizer,
-                scheduler,
-                c.train_state_dict_load_path,
-                device,
-            )
-        else:
-            print(
-                f"Checkpoint file {c.train_state_dict_load_path} not found or load/save paths are identical and file doesn't exist. Starting from scratch."
-            )
+    if should_load_checkpoint(c):
+        # load_checkpoint needs the scheduler instance, not the factory
+        start_epoch = load_checkpoint(  # load_checkpoint might return start_epoch
+            model,
+            optimizer,
+            scheduler,
+            c.train_state_dict_load_path,
+            device,
+        )
+    else:
+        print(
+            f"Checkpoint file {c.train_state_dict_load_path} not found or load/save paths are identical and file doesn't exist. Starting from scratch."
+        )
 
     # set this before DDP
     data_loader.model = model
@@ -638,6 +634,15 @@ def compute_losses(
     return losses
 
 
+def should_load_checkpoint(config):
+    if config.train_state_dict_load_path is None:
+        return False
+    return (config.train_state_dict_save_path != config.train_state_dict_load_path) or (
+        (config.train_state_dict_save_path == config.train_state_dict_load_path)
+        and os.path.exists(config.train_state_dict_load_path)
+    )
+
+
 def load_checkpoint(model, optimizer, scheduler, train_state_dict_load_path, device):
     print(f"Loading checkpoint from {train_state_dict_load_path}")
     try:
@@ -652,6 +657,7 @@ def load_checkpoint(model, optimizer, scheduler, train_state_dict_load_path, dev
             if scheduler is not None:
                 for _ in range(start_epoch - 1):
                     scheduler.step()
+            return start_epoch
         else:
             raise ValueError(
                 f"Checkpoint does not contain 'model_state_dict' or 'optimizer_state_dict'. Checkpoint: {checkpoint}"
@@ -661,7 +667,14 @@ def load_checkpoint(model, optimizer, scheduler, train_state_dict_load_path, dev
         raise e
 
 
-def save_checkpoint(model, optimizer, train_state_dict_save_path, epoch, config):
+def load_config(train_state_dict_load_path):
+    checkpoint = torch.load(train_state_dict_load_path, map_location="cpu")
+    return MainConfig.from_dict(checkpoint["config"])
+
+
+def save_checkpoint(
+    model, optimizer, train_state_dict_save_path, epoch, config: MainConfig
+):
     set_model_to(model, optimizer, "eval")
     save_model = (
         model.module
@@ -676,7 +689,7 @@ def save_checkpoint(model, optimizer, train_state_dict_save_path, epoch, config)
             "model_state_dict": save_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
-            "config": config,
+            "config": config.to_dict(),
         }
         torch.save(checkpoint, train_state_dict_save_path)
     except Exception as e:

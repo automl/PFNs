@@ -39,6 +39,13 @@ def parse_args():
         help="Path to save/load checkpoint and for tensorboard.",
     )
 
+    parser.add_argument(
+        "--checkpoint-save-load-suffix",
+        type=str,
+        default="",
+        help="Suffix to add to the checkpoint save/load path. This can e.g. be the seed.",
+    )
+
     return parser.parse_args()
 
 
@@ -108,6 +115,11 @@ def main():
     def get_filename(config_file):
         return f"{config_file.split('/')[-1].split('.')[0]}"
 
+    if args.checkpoint_save_load_suffix:
+        assert (
+            args.checkpoint_save_load_prefix is not None
+        ), "checkpoint_save_load_prefix is required when checkpoint_save_load_suffix is provided"
+
     # Override checkpoint paths if specified via CLI
     if args.checkpoint_save_load_prefix is not None:
         assert (
@@ -118,7 +130,13 @@ def main():
         ), "train_state_dict_load_path is already set"
         assert config.tensorboard_path is None, "tensorboard_path is already set"
 
-        path = f"{args.checkpoint_save_load_prefix}/{get_filename(args.config_file)}"
+        # Add suffix if it exists
+        suffix = (
+            f"_{args.checkpoint_save_load_suffix}"
+            if args.checkpoint_save_load_suffix
+            else ""
+        )
+        path = f"{args.checkpoint_save_load_prefix}/{get_filename(args.config_file)}{suffix}"
 
         config = config.__class__(
             **{

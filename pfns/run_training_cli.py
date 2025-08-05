@@ -46,10 +46,19 @@ def parse_args():
         help="Suffix to add to the checkpoint save/load path. This can e.g. be the seed.",
     )
 
+    parser.add_argument(
+        "--config-index",
+        type=int,
+        default=0,
+        help="Index of the config to use. This is used to select a config from the config file.",
+    )
+
     return parser.parse_args()
 
 
-def load_config_from_python(config_file: str) -> pfns.train.MainConfig:
+def load_config_from_python(
+    config_file: str, config_index: int
+) -> pfns.train.MainConfig:
     """Load MainConfig from a Python file by accessing the 'config' variable."""
     config_path = Path(config_file)
 
@@ -78,14 +87,19 @@ def load_config_from_python(config_file: str) -> pfns.train.MainConfig:
         try:
             spec.loader.exec_module(config_module)
 
-            # Check if the module has a config variable
-            if not hasattr(config_module, "config"):
-                raise AttributeError(
-                    f"Config file {config_file} must define a 'config' variable"
+            if hasattr(config_module, "config") == hasattr(config_module, "get_config"):
+                raise ValueError(
+                    f"Config file {config_file} must define either a 'config' variable or a 'get_config' function, but not both."
+                    f"It has {hasattr(config_module, 'config')=} and {hasattr(config_module, 'get_config')=}."
                 )
 
-            # Get the config variable
-            config = config_module.config
+            if hasattr(config_module, "get_config"):
+                config = config_module.get_config(config_index)
+            else:
+                assert (
+                    config_index == 0
+                ), "config_index is not 0 but get_config is not defined"
+                config = config_module.config
 
             # Validate that it is a MainConfig instance
             if not isinstance(config, pfns.train.MainConfig):
@@ -110,7 +124,7 @@ def main():
     args = parse_args()
 
     # Load configuration from Python file
-    config = load_config_from_python(args.config_file)
+    config = load_config_from_python(args.config_file, args.config_index)
 
     def get_filename(config_file):
         return f"{config_file.split('/')[-1].split('.')[0]}"
@@ -131,11 +145,10 @@ def main():
         assert config.tensorboard_path is None, "tensorboard_path is already set"
 
         # Add suffix if it exists
-        suffix = (
-            f"_{args.checkpoint_save_load_suffix}"
-            if args.checkpoint_save_load_suffix
-            else ""
-        )
+        suffix = f"_{args.config_index}"
+        if args.checkpoint_save_load_suffix:
+            suffix += f"_{args.checkpoint_save_load_suffix}"
+
         path = f"{args.checkpoint_save_load_prefix}/{get_filename(args.config_file)}{suffix}"
 
         config = config.__class__(

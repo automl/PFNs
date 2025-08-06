@@ -67,10 +67,12 @@ def parse_args():
 
 
 def load_config_from_python(
-    config_file: str, config_index: int
+    config_file: str, config_index: int, config_base_path: str | None = None
 ) -> pfns.train.MainConfig:
     """Load MainConfig from a Python file by accessing the 'config' variable."""
     config_path = Path(config_file)
+    if config_base_path is not None:
+        config_path = Path(config_base_path) / config_path
 
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
@@ -186,7 +188,9 @@ def main():
     # as there is some randomness in the config and we want to use the exact
     # same config again.
     if pfns.train.should_load_checkpoint(config):
-        config = pfns.train.load_config(config.train_state_dict_load_path)
+        config = pfns.train.load_config(
+            config.train_state_dict_load_path,
+        )
 
     print("Starting training with configuration:")
     print(f"  Epochs: {config.epochs}")

@@ -652,10 +652,19 @@ def should_load_checkpoint(config: MainConfig):
     )
 
 
-def load_checkpoint(model, optimizer, scheduler, train_state_dict_load_path, device):
+def load_checkpoint(
+    model,
+    optimizer,
+    scheduler,
+    train_state_dict_load_path,
+    device,
+    load_function: tp.Callable | None = None,
+):
     print(f"Loading checkpoint from {train_state_dict_load_path}")
+    if load_function is None:
+        load_function = torch.load
     try:
-        checkpoint = torch.load(train_state_dict_load_path, map_location=device)
+        checkpoint = load_function(train_state_dict_load_path, map_location=device)
         if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
             # New format with model, optimizer state and epoch
             model.load_state_dict(checkpoint["model_state_dict"], strict=True)
@@ -676,13 +685,20 @@ def load_checkpoint(model, optimizer, scheduler, train_state_dict_load_path, dev
         raise e
 
 
-def load_config(train_state_dict_load_path):
-    checkpoint = torch.load(train_state_dict_load_path, map_location="cpu")
+def load_config(train_state_dict_load_path, load_function: tp.Callable | None = None):
+    if load_function is None:
+        load_function = torch.load
+    checkpoint = load_function(train_state_dict_load_path, map_location="cpu")
     return MainConfig.from_dict(checkpoint["config"])
 
 
 def save_checkpoint(
-    model, optimizer, train_state_dict_save_path, epoch, config: MainConfig
+    model,
+    optimizer,
+    train_state_dict_save_path,
+    epoch,
+    config: MainConfig,
+    save_function: tp.Callable | None = None,
 ):
     set_model_to(model, optimizer, "eval")
     save_model = (
@@ -700,6 +716,8 @@ def save_checkpoint(
             "epoch": epoch,
             "config": config.to_dict(),
         }
-        torch.save(checkpoint, train_state_dict_save_path)
+        if save_function is None:
+            save_function = torch.save
+        save_function(checkpoint, train_state_dict_save_path)
     except Exception as e:
         print(f"Error saving checkpoint: {e}")

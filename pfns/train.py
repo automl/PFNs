@@ -76,12 +76,19 @@ def train(
     device: str | None = None,
     reusable_config: bool = True,
     compile: bool = False,
+    load_checkpoint_function: tp.Callable | None = None,
+    save_checkpoint_function: tp.Callable | None = None,
 ):
     if reusable_config:
         assert c.from_yaml(c.to_yaml()) == c, (
             "Config is not safe to use, got different config: "
             f"{c.from_yaml(c.to_yaml())=} vs {c=}"
         )
+
+    if load_checkpoint_function is None:
+        load_checkpoint_function = load_checkpoint
+    if save_checkpoint_function is None:
+        save_checkpoint_function = save_checkpoint
 
     # Arguments from original signature not in MainConfig are set to defaults here
     load_weights_from_this_state_dict = None
@@ -209,12 +216,14 @@ def train(
 
     if should_load_checkpoint(c):
         # load_checkpoint needs the scheduler instance, not the factory
-        start_epoch = load_checkpoint(  # load_checkpoint might return start_epoch
-            model,
-            optimizer,
-            scheduler,
-            c.train_state_dict_load_path,
-            device,
+        start_epoch = (
+            load_checkpoint_function(  # load_checkpoint might return start_epoch
+                model,
+                optimizer,
+                scheduler,
+                c.train_state_dict_load_path,
+                device,
+            )
         )
     else:
         print(
@@ -354,7 +363,7 @@ def train(
 
             # Save model state dict after each epoch if path is provided (on rank 0)
             if c.train_state_dict_save_path is not None and rank == 0:
-                save_checkpoint(
+                save_checkpoint_function(
                     model,
                     optimizer,
                     c.train_state_dict_save_path,
@@ -634,7 +643,7 @@ def compute_losses(
     return losses
 
 
-def should_load_checkpoint(config):
+def should_load_checkpoint(config: MainConfig):
     if config.train_state_dict_load_path is None:
         return False
     return (config.train_state_dict_save_path != config.train_state_dict_load_path) or (

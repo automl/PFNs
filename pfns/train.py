@@ -707,7 +707,6 @@ def save_checkpoint(
         else model
     )
     print(f"Saving checkpoint to {train_state_dict_save_path} (epoch {epoch})")
-    os.makedirs(os.path.dirname(train_state_dict_save_path), exist_ok=True)
     try:
         # Save model state dict, optimizer state dict, and current epoch
         checkpoint = {
@@ -717,6 +716,7 @@ def save_checkpoint(
             "config": config.to_dict(),
         }
         if save_function is None:
+            os.makedirs(os.path.dirname(train_state_dict_save_path), exist_ok=True)
             save_function = torch.save
         save_function(checkpoint, train_state_dict_save_path)
     except Exception as e:

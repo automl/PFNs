@@ -37,7 +37,7 @@ def load_model_only_inference(path, filename, device="cpu"):
 
     n_out = config_sample["max_num_classes"]
 
-    device = device if torch.cuda.is_available() else "cpu:0"
+    device = device if torch.cuda.is_available() else "cpu"
     encoder = encoder(config_sample["num_features"], config_sample["emsize"])
 
     nhid = config_sample["emsize"] * config_sample["nhid_factor"]

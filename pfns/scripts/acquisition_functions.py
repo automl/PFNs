@@ -745,7 +745,7 @@ class TransformerBOMethod:
         self,
         model,
         acq_f=general_acq_function,
-        device="cpu:0",
+        device="cpu",
         fit_encoder=None,
         **kwargs,
     ):

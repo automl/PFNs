@@ -13,7 +13,7 @@ from scipy.optimize import Bounds
 from .. import utils
 from ..priors.hebo_prior import Warp
 
-device = "cpu:0"
+device = "cpu"
 
 
 def fit_lbfgs(x, w, nll, num_grad_steps=10, ignore_prior=True, params0=None):

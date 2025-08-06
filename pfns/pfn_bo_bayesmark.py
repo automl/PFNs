@@ -28,7 +28,7 @@ class PFNOptimizer(AbstractOptimizer):
         minimize=True,
         acqf_optimizer_name="lbfgs",
         sobol_sampler=False,
-        device="cpu:0",
+        device="cpu",
         fit_encoder_from_step=None,
         verbose=False,
         rand_bool=False,
@@ -467,7 +467,7 @@ def test():
     config = {
         "pfn_file": "final_models/model_hebo_morebudget_9_unused_features_3.pt",
         "minimize": 1,
-        "device": "cpu:0",
+        "device": "cpu",
         "fit_encoder_from_step": None,
         "pre_sample_size": 1_000,
         "num_grad_steps": 15_000,

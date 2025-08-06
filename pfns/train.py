@@ -76,19 +76,16 @@ def train(
     device: str | None = None,
     reusable_config: bool = True,
     compile: bool = False,
-    load_checkpoint_function: tp.Callable | None = None,
-    save_checkpoint_function: tp.Callable | None = None,
+    # Handy functions to override when not working with a standard file system
+    save_object_function: tp.Callable | None = None,  # defaults to torch.save
+    load_object_function: tp.Callable | None = None,  # defaults to torch.load
+    check_path_exists_function: tp.Callable | None = None,  # defaults to os.path.exists
 ):
     if reusable_config:
         assert c.from_yaml(c.to_yaml()) == c, (
             "Config is not safe to use, got different config: "
             f"{c.from_yaml(c.to_yaml())=} vs {c=}"
         )
-
-    if load_checkpoint_function is None:
-        load_checkpoint_function = load_checkpoint
-    if save_checkpoint_function is None:
-        save_checkpoint_function = save_checkpoint
 
     # Arguments from original signature not in MainConfig are set to defaults here
     load_weights_from_this_state_dict = None
@@ -214,16 +211,15 @@ def train(
 
     start_epoch = 1  # Default start epoch
 
-    if should_load_checkpoint(c):
+    if should_load_checkpoint(c, check_path_exists_function=check_path_exists_function):
         # load_checkpoint needs the scheduler instance, not the factory
-        start_epoch = (
-            load_checkpoint_function(  # load_checkpoint might return start_epoch
-                model,
-                optimizer,
-                scheduler,
-                c.train_state_dict_load_path,
-                device,
-            )
+        start_epoch = load_checkpoint(  # load_checkpoint might return start_epoch
+            model,
+            optimizer,
+            scheduler,
+            c.train_state_dict_load_path,
+            device,
+            load_function=load_object_function,
         )
     else:
         print(
@@ -363,12 +359,13 @@ def train(
 
             # Save model state dict after each epoch if path is provided (on rank 0)
             if c.train_state_dict_save_path is not None and rank == 0:
-                save_checkpoint_function(
+                save_checkpoint(
                     model,
                     optimizer,
                     c.train_state_dict_save_path,
                     epoch,
                     config=c,
+                    save_function=save_object_function,
                 )
 
     except KeyboardInterrupt:
@@ -643,12 +640,16 @@ def compute_losses(
     return losses
 
 
-def should_load_checkpoint(config: MainConfig):
+def should_load_checkpoint(
+    config: MainConfig, check_path_exists_function: tp.Callable | None = None
+):
     if config.train_state_dict_load_path is None:
         return False
+    if check_path_exists_function is None:
+        check_path_exists_function = os.path.exists
     return (config.train_state_dict_save_path != config.train_state_dict_load_path) or (
         (config.train_state_dict_save_path == config.train_state_dict_load_path)
-        and os.path.exists(config.train_state_dict_load_path)
+        and check_path_exists_function(config.train_state_dict_load_path)
     )
 
 

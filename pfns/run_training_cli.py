@@ -47,6 +47,16 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--tensorboard-path",
+        type=str,
+        default=None,
+        help=(
+            "Path to save tensorboard. If not provided, will use the "
+            "checkpoint save/load prefix or the path in the config file."
+        ),
+    )
+
+    parser.add_argument(
         "--config-index",
         type=int,
         default=0,
@@ -134,6 +144,8 @@ def main():
             args.checkpoint_save_load_prefix is not None
         ), "checkpoint_save_load_prefix is required when checkpoint_save_load_suffix is provided"
 
+    config_tensorboard_path_is_none = config.tensorboard_path is None
+
     # Override checkpoint paths if specified via CLI
     if args.checkpoint_save_load_prefix is not None:
         assert (
@@ -142,7 +154,7 @@ def main():
         assert (
             config.train_state_dict_load_path is None
         ), "train_state_dict_load_path is already set"
-        assert config.tensorboard_path is None, "tensorboard_path is already set"
+        assert config_tensorboard_path_is_none, "tensorboard_path is already set"
 
         # Add suffix if it exists
         suffix = f"_{args.config_index}"
@@ -160,6 +172,15 @@ def main():
             }
         )
         os.makedirs(path, exist_ok=True)
+
+    if args.tensorboard_path is not None:
+        assert config_tensorboard_path_is_none, "tensorboard_path is already set"
+        config = config.__class__(
+            **{
+                **config.__dict__,
+                "tensorboard_path": args.tensorboard_path,
+            }
+        )
 
     # We overwrite the config with the one from the checkpoint if it exists
     # as there is some randomness in the config and we want to use the exact

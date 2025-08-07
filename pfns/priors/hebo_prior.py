@@ -83,7 +83,21 @@ def _compute_gamma_params(
         raise ValueError("Must provide either (mean, std) or (concentration, rate)")
 
 
-def get_model(x, y, hyperparameters: dict, sample=True):
+def to_random_module_no_copy(module) -> gpytorch.Module:
+    random_module_cls = type(
+        "_Random" + module.__class__.__name__,
+        (gpytorch.module.RandomModuleMixin, module.__class__),
+        {},
+    )
+    module.__class__ = random_module_cls  # hack
+
+    for mname, child in module.named_children():
+        if isinstance(child, gpytorch.Module):
+            setattr(module, mname, to_random_module_no_copy(child))
+    return module
+
+
+def get_model(x, y, hyperparameters: dict, sample=True, no_deepcopy=True):
     sample_from_path = hyperparameters.get("sample_from_extra_prior", None)
     device = x.device
     num_features = x.shape[-1]
@@ -189,7 +203,14 @@ def get_model(x, y, hyperparameters: dict, sample=True):
     likelihood.to(device)
 
     if sample:
-        model = model.pyro_sample_from_prior()
+        if no_deepcopy:
+            # code same as model.pyro_sample_from_prior(), just without the deepcopy
+            from gpytorch.module import _pyro_sample_from_prior
+
+            model = to_random_module_no_copy(model)
+            _pyro_sample_from_prior(module=model, memo=None, prefix="")
+        else:
+            model = model.pyro_sample_from_prior()
         if sample_from_path:
             parameter_sample_distribution = torch_load(
                 sample_from_path
@@ -256,7 +277,9 @@ def get_batch(
         *hyperparameters.get("fast_computations", (True, True, True))
     ):
         batch_size_per_gp_sample = batch_size_per_gp_sample or max(batch_size // 4, 1)
-        assert batch_size % batch_size_per_gp_sample == 0
+        assert (
+            batch_size % batch_size_per_gp_sample == 0
+        ), f"{batch_size} % {batch_size_per_gp_sample} != 0"
 
         total_num_candidates = batch_size * (2 ** (fix_to_range is not None))
         num_candidates = batch_size_per_gp_sample * (2 ** (fix_to_range is not None))
@@ -384,7 +407,7 @@ def get_batch(
                     samples_wo_noise.append(sample_wo_noise)
                     successful_sample = True
 
-        if torch.rand(1).item() < 0.01:
+        if torch.rand(1).item() < 0.0001:
             print(
                 "throwaway share",
                 throwaway_share / (batch_size // batch_size_per_gp_sample),

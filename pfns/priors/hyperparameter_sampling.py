@@ -201,12 +201,14 @@ def get_all_styled_hps(hyperparameters):
         return hps_as_style
 
 
-def get_batch(batch_size, *args, hyperparameters, get_batch, **kwargs):
+def get_batch(
+    batch_size, *args, hyperparameters, get_batch, batch_size_per_gp_sample=1, **kwargs
+):
     hyperparameters = deepcopy(hyperparameters)
-    num_models = min(
-        hyperparameters.pop("num_hyperparameter_samples_per_batch"),
-        batch_size,
-    )
+    assert (
+        batch_size % batch_size_per_gp_sample == 0
+    ), f"batch_size {batch_size} must be a multiple of batch_size_per_gp_sample {batch_size_per_gp_sample}"
+    num_models = batch_size // batch_size_per_gp_sample
     skip_prob = hyperparameters.pop("hyperparameter_sampling_skip_style_prob")
     hps_as_style = get_all_styled_hps(hyperparameters)
     del hyperparameters["hyperparameter_sampling_add_hps_to_style"]

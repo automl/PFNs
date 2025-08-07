@@ -304,8 +304,10 @@ def train(
             epoch_time = time.time() - epoch_start_time
             if device.startswith("cuda"):
                 max_gpu_mem_gb = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
+                gpu_utilization = torch.cuda.utilization()
             else:
                 max_gpu_mem_gb = None
+                gpu_utilization = None
             current_lr = (
                 scheduler.get_last_lr()[0]
                 if scheduler is not None
@@ -321,6 +323,7 @@ def train(
                     + f"| data time {epoch_result.data_time:5.2f} step time {epoch_result.step_time:5.2f} "
                     + f"forward time {epoch_result.forward_time:5.2f} "
                     + f"| max gpu mem {f'{max_gpu_mem_gb:.1f}' if max_gpu_mem_gb is not None else 'N/A'} GiB "
+                    + f"| gpu utilization {f'{gpu_utilization:.1f}' if gpu_utilization is not None else 'N/A'} %"
                     + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
                 )
                 print("-" * 89)
@@ -345,6 +348,7 @@ def train(
                 # Log GPU memory if available
                 if device.startswith("cuda"):
                     writer.add_scalar("epoch/max_gpu_memory_gb", max_gpu_mem_gb, epoch)
+                    writer.add_scalar("epoch/gpu_utilization", gpu_utilization, epoch)
 
                 # Log validation loss if available
                 if c.validation_period is not None and (

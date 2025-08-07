@@ -225,6 +225,7 @@ def get_batch(
             batch_size // num_models,
             *args,
             hyperparameters=hyperparameters_sample,
+            batch_size_per_gp_sample=batch_size_per_gp_sample,
             **kwargs,
         )
         sub_batches.append(sub_batch)

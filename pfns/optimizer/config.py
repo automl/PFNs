@@ -33,19 +33,24 @@ class OptimizerConfig(base_config.BaseConfig):
                 model_parameters, lr=self.lr, weight_decay=self.weight_decay
             )
         elif self.optimizer == "sf_adamw":
-            import schedulefree
+            from .adamw_schedulefree import AdamWScheduleFree
 
-            return schedulefree.AdamWScheduleFree(
+            return AdamWScheduleFree(
                 model_parameters,
                 lr=self.lr,
                 weight_decay=self.weight_decay,
                 warmup_steps=self.optim_warmup_steps,
             )
         elif self.optimizer == "shampoo":
-            from optimizers.distributed_shampoo import (
-                AdamGraftingConfig,
-                DistributedShampoo,
-            )
+            try:
+                from optimizers.distributed_shampoo import (
+                    AdamGraftingConfig,
+                    DistributedShampoo,
+                )
+            except ImportError:
+                raise ImportError(
+                    "shampoo optimizer not found, please install optimizers package"
+                )
 
             return DistributedShampoo(
                 model_parameters,

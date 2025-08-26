@@ -210,3 +210,20 @@ The CLI is designed to work seamlessly with the existing `train` function. You c
 3. Mix both approaches as needed
 
 The CLI simply provides a convenient interface to the same underlying training functionality. 
+
+
+
+## Inference
+
+Our trainings save checkpoints and to run inference on these checkpoints one needs to rebuild the model using the config.
+This can be done like so:
+
+```python
+from pfns.train import MainConfig
+
+checkpoint = torch.load(CHECKPOINT_PATH)
+c = MainConfig.from_dict(checkpoint['config'])
+model = c.model.create_model()
+model.load_state_dict(checkpoint['model_state_dict'])
+model.eval()
+```

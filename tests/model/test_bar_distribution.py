@@ -62,3 +62,37 @@ def test_average_bar_distributions_into_different_one():
     assert new_small_d.cdf(new_small_logits, pos).item() == approx(
         sum([bd.cdf(l, pos)[0].item() for bd, l in zip(bar_dists, logits)]) / 4
     )
+
+
+def test_entropy():
+    prob = torch.tensor([0.1, 0.2, 0.3, 0.4])
+    d = bar_distribution.BarDistribution(borders=torch.linspace(0, 1, 5))
+    logits = prob.log()
+    # Manual: H = -sum p * log(p/width) = -sum p log p + sum p log width
+    widths = d.borders[1:] - d.borders[:-1]
+    manual = -(prob * prob.log()).sum() + (prob * widths.log()).sum()
+    val = d.entropy(logits)
+    assert val.item() == approx(manual.item(), abs=1e-6)
+
+
+def test_entropy_full_support():
+    # Use three buckets so we have two half-normals and one interior uniform
+    borders = torch.tensor([-1.0, 0.0, 1.0, 3.0])
+    d = bar_distribution.FullSupportBarDistribution(borders=borders)
+    prob = torch.tensor([0.2, 0.5, 0.3])
+    logits = prob.log()
+    # Component entropies: left/right half-normal at scales set by bucket widths
+    left_hn = d.halfnormal_with_p_weight_before(d.bucket_widths[0])
+    right_hn = d.halfnormal_with_p_weight_before(d.bucket_widths[-1])
+    H_components = torch.tensor(
+        [
+            left_hn.entropy(),
+            torch.log(
+                d.bucket_widths[1]
+            ),  # no negation needed as bucket_widths = 1/prob
+            right_hn.entropy(),
+        ]
+    )
+    manual = (prob * (-prob.log() + H_components)).sum()
+    val = d.entropy(logits)
+    assert val.item() == approx(manual.item(), abs=1e-6)

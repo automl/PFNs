@@ -253,6 +253,13 @@ class BarDistribution(nn.Module):
         nll_loss[ignore_loss_mask] = 0.0
         return nll_loss
 
+    def entropy(self, logits: torch.Tensor) -> torch.Tensor:
+        probs = torch.softmax(logits, dim=-1)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        log_widths = torch.log(self.bucket_widths)
+        # H = -sum p * (log p - log width)
+        return -torch.sum(probs * (log_probs - log_widths), dim=-1)
+
     def mean(self, logits: torch.Tensor) -> torch.Tensor:
         bucket_means = self.borders[:-1] + self.bucket_widths / 2
         p = torch.softmax(logits, -1)
@@ -774,6 +781,26 @@ class FullSupportBarDistribution(BarDistribution):
         if (ys < self.borders[1]).any() or (ys > self.borders[-2]).any():
             raise NotImplementedError("We cannot compute the cdf for bordert buckets.")
         return self.cdf(logits, ys)
+
+    def entropy(self, logits: torch.Tensor) -> torch.Tensor:
+        """Entropy of the full-support distribution (disjoint mixture).
+
+        When supports are disjoint, H = H(p) + sum_i p_i H(component_i).
+        Interior components are uniform with entropy log(width).
+        Side components are half-normal with entropy provided by torch.
+        """
+        probs = torch.softmax(logits, dim=-1)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        discrete_entropy = -(probs * log_probs).sum(dim=-1)
+        component_entropies = torch.empty_like(logits)
+        # Interior bucket entropies (uniforms)
+        component_entropies[..., 1:-1] = torch.log(self.bucket_widths[1:-1])
+        # Side entropies (half-normals)
+        side_left = self.halfnormal_with_p_weight_before(self.bucket_widths[0])
+        side_right = self.halfnormal_with_p_weight_before(self.bucket_widths[-1])
+        component_entropies[..., 0] = side_left.entropy().to(logits.dtype)
+        component_entropies[..., -1] = side_right.entropy().to(logits.dtype)
+        return discrete_entropy + (probs * component_entropies).sum(dim=-1)
 
 
 def get_bucket_borders(

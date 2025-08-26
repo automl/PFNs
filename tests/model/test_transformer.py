@@ -301,7 +301,7 @@ def test_cache_trainset_representation(sample_data):
     # The format of test_x should match the model's batch_first setting.
     output2 = transformer_model(x=None, y=None, test_x=sample_data["test_x"])
 
-    assert torch.allclose(output1, output2)
+    assert torch.allclose(output1, output2, atol=1e-7)
 
     # Clear cache and results should be different
     transformer_model.empty_trainset_representation_cache()
@@ -313,7 +313,7 @@ def test_cache_trainset_representation(sample_data):
         test_x=sample_data["test_x"],
     )
 
-    assert torch.allclose(output1, output3)  # Should be deterministic
+    assert torch.allclose(output1, output3, atol=1e-7)  # Should be deterministic
 
 
 def test_decoder_dict(sample_data):

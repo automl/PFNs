@@ -24,7 +24,7 @@ dependencies=[
         'gpytorch>=1.5.0',
         'configspace>=0.4.21',
         'tqdm>=4.62.1',
-        'botorch>=0.7.2',
+        'botorch',
         'matplotlib>=3.10.1',
         'einops>=0.8.1',
         'pre-commit>=3.5.0',

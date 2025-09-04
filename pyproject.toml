@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pfns"
-version = "0.3.1"
+version = "0.4.0"
 authors = [
 {name="Samuel Muller"},
 {name="Matthias Feurer"},

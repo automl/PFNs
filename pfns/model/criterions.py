@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
 from pfns import base_config
@@ -5,6 +7,7 @@ from pfns import base_config
 from .bar_distribution import BarDistributionConfig
 
 
+@dataclass(frozen=True)
 class CrossEntropyConfig(base_config.BaseConfig):
     reduction: str = "none"
     num_classes: int

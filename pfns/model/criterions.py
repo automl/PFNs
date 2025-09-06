@@ -9,8 +9,8 @@ from .bar_distribution import BarDistributionConfig
 
 @dataclass(frozen=True)
 class CrossEntropyConfig(base_config.BaseConfig):
-    reduction: str = "none"
     num_classes: int
+    reduction: str = "none"
 
     def get_criterion(self):
         return nn.CrossEntropyLoss(

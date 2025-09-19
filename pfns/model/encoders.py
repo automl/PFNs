@@ -54,6 +54,7 @@ class EncoderConfig(base_config.BaseConfig):
     constant_normalization_mean: float = 0.0
     constant_normalization_std: float = 1.0
     train_normalization: bool = False
+    hidden_size: int | None = None
 
     def __post_init__(self):
         assert not (
@@ -99,11 +100,21 @@ class EncoderConfig(base_config.BaseConfig):
         encoder_sequence.append(
             LinearInputEncoderStep(
                 num_features=features * len(in_keys_for_linear),
-                emsize=emsize,
+                emsize=emsize if self.hidden_size is None else self.hidden_size,
                 in_keys=in_keys_for_linear,
-                out_keys=("output",),
-            )
+                out_keys=("output" if self.hidden_size is None else "main",),
+            ),
         )
+        if self.hidden_size is not None:
+            encoder_sequence.append(
+                LinearInputEncoderStep(
+                    num_features=self.hidden_size,
+                    emsize=emsize,
+                    in_keys=("main",),
+                    out_keys=("output",),
+                    activation_on_inputs="gelu",
+                ),
+            )
         return SequentialEncoder(*encoder_sequence)
 
 
@@ -321,6 +332,7 @@ class LinearInputEncoderStep(SeqEncStep):
         bias: bool = True,
         in_keys: tuple[str, ...] = ("main",),
         out_keys: tuple[str, ...] = ("output",),
+        activation_on_inputs: str | None = None,
     ):
         """Initialize the LinearInputEncoderStep.
 
@@ -331,10 +343,20 @@ class LinearInputEncoderStep(SeqEncStep):
             bias: Whether to use a bias term in the linear layer. Defaults to True.
             in_keys: The keys of the input tensors. Defaults to ("main",).
             out_keys: The keys to assign the output tensors to. Defaults to ("output",).
+            activation_on_inputs: The activation function to apply to the inputs before the linear layer.
+                Defaults to None. Can take: "gelu" and None.
         """
         super().__init__(in_keys, out_keys)
         self.layer = nn.Linear(num_features, emsize, bias=bias)
         self.replace_nan_by_zero = replace_nan_by_zero
+        self.activation = None
+        if activation_on_inputs is not None:
+            if activation_on_inputs == "gelu":
+                self.activation = nn.GELU()
+            else:
+                raise ValueError(
+                    f"Activation {self.activation_on_inputs} not supported"
+                )
 
     def _fit(self, *x: torch.Tensor, **kwargs: Any):
         """Fit the encoder step. Does nothing for LinearInputEncoderStep."""
@@ -353,6 +375,8 @@ class LinearInputEncoderStep(SeqEncStep):
         x = torch.cat(x, dim=-1)
         if self.replace_nan_by_zero:
             x = torch.nan_to_num(x, nan=0.0)
+        if self.activation is not None:
+            x = self.activation(x)
         return (self.layer(x),)
 
 

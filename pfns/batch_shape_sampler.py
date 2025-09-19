@@ -30,6 +30,7 @@ class BatchShape:
 @dataclass(frozen=True)
 class BatchShapeSamplerConfig(BaseConfig):
     batch_size: int = 32
+    min_single_eval_pos: int = 0
     max_seq_len: int = 1000
     min_num_features: int = 1
     max_num_features: int = 16
@@ -46,7 +47,7 @@ class BatchShapeSamplerConfig(BaseConfig):
         num_features = rng.randint(self.min_num_features, self.max_num_features)
 
         single_eval_pos = rng.randint(
-            0,
+            self.min_single_eval_pos,
             self.max_seq_len
             - 1
             - (

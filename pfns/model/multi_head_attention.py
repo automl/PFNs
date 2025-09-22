@@ -299,9 +299,11 @@ class MultiHeadAttention(torch.nn.Module):
         assert not (
             cache_kv and use_cached_kv
         ), "Cannot cache and use cached keys and values at the same time."
-        assert not x.requires_grad or (
-            not self.has_cached_kv and not cache_kv
-        ), "Saving keys and values is only supported during inference."
+        assert (
+            not x.requires_grad or not cache_kv
+        ), "Saving keys and values will stop gradients to flow into trainset."
+
+        # Flatten the batch dimensions
         x, x_kv, x_shape_after_transpose = self._rearrange_inputs_to_flat_batch(x, x_kv)
 
         nhead_kv = 1 if reuse_first_head_kv else self._nhead_kv

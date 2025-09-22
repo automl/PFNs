@@ -1,32 +1,33 @@
+import pytest
 import torch
 
 from pfns.model.multi_head_attention import MultiHeadAttention
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Testing attention on {device=}.")
+n_batch = 7
+nhead = 4
+n_seq_q = 534
+n_seq_kv = 316
+embed_dim = 128
+
+dtype = torch.float16 if device == "cuda" else torch.float32
+
+x_q = torch.normal(
+    torch.tensor(0.0),
+    torch.tensor(1.0),
+    size=(n_batch, n_seq_q, embed_dim),
+)
+x_kv = torch.normal(
+    torch.tensor(0.0),
+    torch.tensor(1.0),
+    size=(n_batch, n_seq_kv, embed_dim),
+)
+x_q = x_q.to(device, dtype)
+x_kv = x_kv.to(device, dtype)
+
 
 def test_attention():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Testing attention on {device=}.")
-    n_batch = 7
-    nhead = 4
-    n_seq_q = 534
-    n_seq_kv = 316
-    embed_dim = 128
-
-    dtype = torch.float16 if device == "cuda" else torch.float32
-
-    x_q = torch.normal(
-        torch.tensor(0.0),
-        torch.tensor(1.0),
-        size=(n_batch, n_seq_q, embed_dim),
-    )
-    x_kv = torch.normal(
-        torch.tensor(0.0),
-        torch.tensor(1.0),
-        size=(n_batch, n_seq_kv, embed_dim),
-    )
-    x_q = x_q.to(device, dtype)
-    x_kv = x_kv.to(device, dtype)
-
     att_ref = torch.nn.MultiheadAttention(
         embed_dim,
         nhead,
@@ -105,7 +106,8 @@ def test_attention():
     y_ = att_multi_test(x_q, x_kv)
     assert torch.sqrt(torch.nn.functional.mse_loss(y, y_)) < 5e-5
 
-    # Caching.
+
+def test_attention_caching():
     att_test = MultiHeadAttention(
         input_size=embed_dim,
         output_size=embed_dim,
@@ -119,6 +121,28 @@ def test_attention():
     y_ = att_test(x_q, use_cached_kv=True)
     assert torch.sqrt(torch.nn.functional.mse_loss(y, y_)) < 5e-5
 
+    # gradients should fail for train part
+    x_q_ = x_q.clone().requires_grad_(True)
+    with pytest.raises(AssertionError):
+        att_test(x_q_, x_kv, cache_kv=True)
+
+    # gradients should not fail for test part
+    x_q_ = x_q.clone().requires_grad_(True)
+    y_ = att_test(x_q_, x_kv, use_cached_kv=True)
+    y_.mean().backward()
+    assert x_q_.grad is not None
+    grads_with_cache = x_q_.grad.clone()
+
+    # compute gradients without caching
+    x_q_ = x_q.clone().requires_grad_(True)
+    y_ = att_test(x_q_, x_kv)
+    y_.mean().backward()
+    assert x_q_.grad is not None
+
+    grads_without_cache = x_q_.grad.clone()
+    assert torch.isclose(grads_with_cache, grads_without_cache).all()
+
 
 if __name__ == "__main__":
     test_attention()
+    test_attention_caching()

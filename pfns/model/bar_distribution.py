@@ -883,7 +883,7 @@ def get_bucket_borders(
 
     unique_borders = torch.unique_consecutive(borders)
 
-    if (unique_borders != borders).any():
+    if len(unique_borders) != len(borders):
         print("Borders were not unique, removed duplicates.")
 
     return unique_borders
